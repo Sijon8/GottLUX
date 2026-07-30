@@ -1,0 +1,13 @@
+# Normalize line endings: store text as LF in the repo, check out native on each OS.
+* text=auto eol=lf
+
+# Binary / non-diffable assets
+*.png binary
+*.pdf binary
+*.tiff binary
+*.npz binary
+*.h5 binary
+*.hdf5 binary
+*.raw binary
+*.docx binary
+*.parquet binary

@@ -1,0 +1,49 @@
+{
+  "clips": [
+    {
+      "file": "hummingbird_fight_short.raw",
+      "title": "Hummingbird skirmish (teaser)",
+      "regime": "staring",
+      "duration_s": 0.134,
+      "size_mb": 0.95,
+      "description": "A split-second burst of two hummingbirds clashing at a feeder — loads instantly.",
+      "suggested": { "accum_ms": 10, "band_hz": [20, 120] }
+    },
+    {
+      "file": "hummingbird_fight.raw",
+      "title": "Hummingbird fight at the feeder",
+      "regime": "staring",
+      "duration_s": 2.1,
+      "size_mb": 8.73,
+      "description": "Two hummingbirds dogfight over a feeder, their ~50 Hz wingbeats lighting up the sensor.",
+      "suggested": { "accum_ms": 15, "band_hz": [20, 120] }
+    },
+    {
+      "file": "quadcopter_staring.raw",
+      "title": "5-inch quadcopter (staring)",
+      "regime": "staring",
+      "duration_s": 3.591,
+      "size_mb": 9.52,
+      "description": "A staring sensor catches a 5-inch quad's blade-pass flicker as it darts through the frame.",
+      "suggested": { "accum_ms": 10, "band_hz": [90, 700] }
+    },
+    {
+      "file": "quadcopter_rotating_a.raw",
+      "title": "Quadcopter, rotating sweep A",
+      "regime": "rotating",
+      "duration_s": 1.467,
+      "size_mb": 7.45,
+      "description": "The sensor spins past the hovering quad — a sweep early in the scan, props strobing in the band.",
+      "suggested": { "accum_ms": 5, "band_hz": [90, 700] }
+    },
+    {
+      "file": "quadcopter_rotating_b.raw",
+      "title": "Quadcopter, rotating sweep B",
+      "regime": "rotating",
+      "duration_s": 1.419,
+      "size_mb": 6.87,
+      "description": "A later pass of the spinning-sensor sweep — same quad, different scan phase and geometry.",
+      "suggested": { "accum_ms": 5, "band_hz": [90, 700] }
+    }
+  ]
+}

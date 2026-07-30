@@ -1,0 +1,14 @@
+{
+  "decoder_version": 5,
+  "fmt": "evt2",
+  "n": 5000,
+  "width": 304,
+  "height": 240,
+  "n_on": 2511,
+  "t_first_us": 0,
+  "t_last_us": 999746,
+  "t0_us": 4000186,
+  "sum_x_mod_2_32": 750465,
+  "sum_y_mod_2_32": 591249,
+  "sum_t_us_mod_2_53": 2477169817
+}

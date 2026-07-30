@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GottLUX Web — event-camera viewer &amp; flutter analysis</title>
+<meta name="description" content="In-browser Prophesee event-camera (.raw) viewer with rotor/wingbeat spectrum analysis. Fully client-side — no uploads, no dependencies.">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%2305080b'/%3E%3Ccircle cx='8' cy='8' r='5' fill='none' stroke='%2339c5cf' stroke-width='1.6'/%3E%3Ccircle cx='8' cy='8' r='1.7' fill='%2339c5cf'/%3E%3C/svg%3E">
+</head>
+<body>
+
+<header>
+  <h1>Gott<span class="lux">Lux</span> Web</h1>
+  <span class="tagline">Event-camera flutter analysis in the browser — press play, drag a box, read the rotor.</span>
+  <nav>
+    <a href="https://github.com/Sijon8/GottLUX" target="_blank" rel="noopener">GitHub</a>
+    <a href="selftest.html">Self-test</a>
+  </nav>
+</header>
+
+<main>
+  <aside id="sidebar">
+    <section class="panel" id="clips-panel">
+      <h2>Sample clips</h2>
+      <div id="clip-list"></div>
+      <div id="manifest-note">Loading clip manifest…</div>
+    </section>
+
+    <div id="dropzone" title="Open a local Prophesee .raw file">
+      <strong>Drop a Prophesee .raw here</strong>
+      or click to browse (EVT2.0 / EVT2.1 / EVT3)
+      <div class="privacy">Decoded entirely in this tab — files never leave the machine.</div>
+      <input type="file" id="file-input" accept=".raw">
+    </div>
+
+    <section class="panel" id="info-panel">
+      <h2>Recording</h2>
+      <dl id="info">
+        <dt>Events</dt><dd id="inf-n">—</dd>
+        <dt>Duration</dt><dd id="inf-dur">—</dd>
+        <dt>Resolution</dt><dd id="inf-res">—</dd>
+        <dt>Format</dt><dd id="inf-fmt">—</dd>
+        <dt>Mean rate</dt><dd id="inf-mean">—</dd>
+        <dt>Peak rate</dt><dd id="inf-peak">—</dd>
+      </dl>
+    </section>
+
+    <section class="panel" id="callout">
+      <h2>Get the full suite</h2>
+      <p>This page is the lightweight companion. The desktop
+        <a href="https://github.com/Sijon8/GottLUX" target="_blank" rel="noopener">GottLUX suite</a> adds:</p>
+      <ul>
+        <li>3-D space-time point-cloud exploration</li>
+        <li>rotating-payload de-rotation &amp; stabilization</li>
+        <li>flutter / blink / track detectors with tuning workbench</li>
+        <li>HDF5, CSV, video &amp; clip-cutting exports</li>
+      </ul>
+    </section>
+  </aside>
+
+  <section id="stage">
+    <div id="viewer-wrap">
+      <canvas id="view" width="320" height="320"></canvas>
+      <div id="view-hint">Pick a sample clip or drop a .raw file to begin.<br>
+        Then drag a box on the image to get that region's flutter spectrum.</div>
+      <div id="roi-tip" hidden></div>
+      <div id="load-overlay" class="hidden">
+        <div id="load-stage">loading…</div>
+        <div class="bar"><div id="load-bar"></div></div>
+      </div>
+    </div>
+
+    <div class="panel" id="transport">
+      <div class="group">
+        <button id="btn-play" disabled>Play</button>
+        <span class="readout"><span id="t-cur">0.000</span><span class="dim"> / </span><span id="t-dur">0.000</span><span class="dim"> s</span></span>
+      </div>
+      <div class="group">
+        <label for="speed">speed</label>
+        <!-- logarithmic: position 0..1 maps to 0.005×..2× (see viewer.js) -->
+        <input type="range" id="speed" min="0" max="1" step="0.001" value="0.653"
+               title="Playback speed — logarithmic, 0.005× to 2×">
+        <span class="readout" id="speed-out" title="Click to cycle 1× / 0.1× / 0.01×">0.25×</span>
+      </div>
+      <div class="group">
+        <label for="accum">window</label>
+        <input type="range" id="accum" min="1" max="200" step="1" value="20">
+        <span class="readout" id="accum-out">20 ms</span>
+      </div>
+      <div class="group">
+        <label for="loop">loop</label>
+        <input type="checkbox" id="loop" checked>
+      </div>
+      <div class="group">
+        <label for="cmap">colormap</label>
+        <select id="cmap">
+          <option value="inferno" selected>inferno</option>
+          <option value="viridis">viridis</option>
+          <option value="gray">grayscale</option>
+        </select>
+      </div>
+      <div class="group">
+        <label for="tone">tone</label>
+        <select id="tone">
+          <option value="linear">linear</option>
+          <option value="log" selected>log</option>
+          <option value="sqrt">sqrt</option>
+        </select>
+      </div>
+      <div class="group">
+        <label for="mode">mode</label>
+        <select id="mode">
+          <option value="count" selected>counts</option>
+          <option value="polarity">polarity ±</option>
+        </select>
+      </div>
+    </div>
+
+    <canvas id="rate-strip" title="Event rate — click or drag to seek"></canvas>
+
+    <section class="panel" id="analysis">
+      <h2>Region analysis</h2>
+      <div class="controls">
+        <div class="group">
+          <label>band</label>
+          <input type="number" id="fmin" min="1" max="5000" step="1" value="30"> –
+          <input type="number" id="fmax" min="2" max="5000" step="1" value="800">
+          <label>Hz</label>
+        </div>
+        <div class="group">
+          <label for="span">span</label>
+          <select id="span">
+            <option value="auto" selected>auto</option>
+            <option value="clip">whole clip</option>
+            <option value="1">1 s @ cursor</option>
+            <option value="2">2 s @ cursor</option>
+          </select>
+        </div>
+        <div class="group">
+          <button id="btn-spectrum" disabled>Update spectrum</button>
+          <button id="btn-clear-roi" disabled>Clear ROI</button>
+        </div>
+        <div class="group">
+          <button id="btn-flicker" disabled>Flicker map</button>
+          <div class="bar hidden" id="flicker-progress"><div id="flicker-bar"></div></div>
+          <button id="btn-overlay" disabled>Hide overlay</button>
+        </div>
+      </div>
+      <canvas id="spectrum" title="Region spectrum"></canvas>
+      <div id="spec-readout" class="mono"><span class="hint">Drag a box on the viewer to analyze a region.</span></div>
+      <div id="flicker-legend" class="hidden">
+        <span>flicker</span>
+        <canvas id="legend-canvas" width="160" height="12"></canvas>
+        <span id="legend-label"></span>
+      </div>
+    </section>
+  </section>
+</main>
+
+<footer>
+  <span>GottLUX Web · MIT license</span>
+  <span>Decoder ported 1:1 from the desktop suite (<a href="selftest.html">verify</a>)</span>
+  <span><a href="https://github.com/Sijon8/GottLUX" target="_blank" rel="noopener">github.com/Sijon8/GottLUX</a></span>
+</footer>
+
+<script src="js/decoder.js"></script>
+<script src="js/analysis.js"></script>
+<script src="js/viewer.js"></script>
+</body>
+</html>

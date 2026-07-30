@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=GottLUX viewer
+Comment=Quick viewer for event-based-sensor (.raw / .h5 / .hdf5) recordings
+Exec=gottlux-view %f
+Terminal=false
+MimeType=application/x-gottlux-raw;application/x-gottlux-hdf5;
+Categories=Science;Graphics;

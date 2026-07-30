@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: "If you use GottLUX in your research, please cite it as below."
+title: "GottLUX: an open-source event-based sensor toolkit"
+abstract: >-
+  An open-source toolkit that removes the barrier to working with event-based (neuromorphic)
+  cameras: a vendor-free Prophesee .raw decoder with sub-second sampled preview of
+  multi-gigabyte recordings, HDF5 interchange in both directions, an interactive instrument
+  (live viewer, 3-D space-time explorer, event-rate tower, flutter workbench), a
+  temporal-frequency detection and tracking engine, de-rotation and fusion for spinning and
+  dual-sensor payloads, EBS-acoustic fusion, a clip-and-canvas video editor, one-command
+  export of analyses as standalone MATLAB and Python scripts, and reproducible
+  provenance-stamped results.
+type: software
+authors:
+  - family-names: Gott
+    given-names: Simon
+version: "1.0.0"
+date-released: "2026-07-29"
+license: MIT
+repository-code: "https://github.com/Sijon8/GottLUX"
+keywords:
+  - event-based sensor
+  - event camera
+  - neuromorphic
+  - event-based vision
+  - Prophesee
+  - frequency analysis
+  - tracking
+  - visualization
+  - video editing
+  - open source

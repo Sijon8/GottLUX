@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=GottLUX
+Comment=Event-based-sensor analysis and visualization suite
+Exec=gottlux-gui
+Terminal=false
+Categories=Science;Graphics;

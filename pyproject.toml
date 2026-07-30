@@ -1,0 +1,106 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gottlux"
+dynamic = ["version"]                 # single-sourced from gottlux/__init__.py:__version__
+description = "Open-source event-based sensor toolkit: sub-second viewing of multi-gigabyte recordings, frequency/flutter analysis and tracking, 3-D space-time visualization, a clip-and-canvas video editor, and export to standalone MATLAB and Python scripts. Removes the barrier to working with event cameras."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Simon Gott" }]
+keywords = [
+    "event-camera", "event-based-vision", "neuromorphic", "EBS", "DVS",
+    "EVT2.1", "EVT3", "Prophesee", "GenX320", "IMX636", "HDF5",
+    "visualization", "space-time", "frequency", "flicker", "tracking",
+    "video-editing", "matlab", "open-source",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+
+# Core dependencies — the suite runs headless with just these.
+dependencies = [
+    "numpy>=2.0",
+    "scipy>=1.11",
+    "matplotlib>=3.8",
+    "imageio>=2.34",
+    "imageio-ffmpeg>=0.5",
+    "pillow>=10.0",
+]
+
+[project.optional-dependencies]
+# The high-performance interactive stack (installed by default in this project).
+# PyOpenGL is a hard requirement of the 3-D space-time and event-rate tower tabs.
+gui = ["PySide6>=6.6", "pyqtgraph>=0.13", "PyOpenGL>=3.1"]
+fast = ["numba>=0.60"]
+# 'data' covers plain HDF5 read/write (h5py). The 'hdf5' extra adds hdf5plugin —
+# a large wheel (opt-in, NOT in data/all) registering the common generic codecs.
+# Prophesee's ECF codec (filter 36559, Metavision "compress on save") is NOT in
+# hdf5plugin; it needs their open-source hdf5_ecf plugin on the HDF5 plugin path.
+data = ["pandas>=2.0", "pyarrow>=14", "scikit-image>=0.22", "h5py>=3.10"]
+hdf5 = ["h5py>=3.10", "hdf5plugin>=4.0"]
+dev = ["pytest>=7.0", "pytest-cov", "pytest-timeout", "ruff"]
+all = [
+    "PySide6>=6.6", "pyqtgraph>=0.13", "PyOpenGL>=3.1", "numba>=0.60",
+    "pandas>=2.0", "pyarrow>=14", "scikit-image>=0.22", "h5py>=3.10",
+]
+
+[project.scripts]
+gottlux = "gottlux.cli:main"
+gottlux-gui = "gottlux.app.main:main"
+gottlux-view = "gottlux.app.quickview:main"
+gottlux-calibrate = "gottlux.run.calibrate:main"
+
+[project.urls]
+Homepage = "https://github.com/Sijon8/GottLUX"
+Repository = "https://github.com/Sijon8/GottLUX"
+Issues = "https://github.com/Sijon8/GottLUX/issues"
+Changelog = "https://github.com/Sijon8/GottLUX/blob/main/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+include = ["gottlux*"]
+exclude = ["tests*", "docs*", "examples*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "gottlux.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["gottlux_runs", "_gottlux_cache"]
+
+[tool.ruff.lint]
+# A pragmatic starting set: pyflakes (F), pycodestyle (E/W), import-sort (I),
+# pyupgrade (UP), bugbear (B). Tighten over time.
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E741",   # ambiguous one-letter names (l, I) — used deliberately in math code
+    "B008",   # function call in default arg — intentional for some factory defaults
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["F401"]          # re-exports for the public API surface
+"tests/**" = ["E402"]                # module-level imports after backend setup
+
+[tool.coverage.run]
+source = ["gottlux"]
+omit = ["gottlux/app/*"]             # the Qt GUI is exercised by offscreen smoke tests only
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

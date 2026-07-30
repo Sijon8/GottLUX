@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-gottlux-raw">
+    <comment>GottLUX event recording</comment>
+    <glob pattern="*.raw" weight="40"/>
+  </mime-type>
+  <mime-type type="application/x-gottlux-hdf5">
+    <comment>GottLUX event recording (HDF5)</comment>
+    <glob pattern="*.h5" weight="40"/>
+    <glob pattern="*.hdf5" weight="40"/>
+  </mime-type>
+</mime-info>

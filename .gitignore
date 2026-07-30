@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# gottlux outputs & caches (regenerable, often large)
+_gottlux_cache/
+gottlux_runs/
+*_kpi_*/
+kpi_comparison/
+examples/quickstart_out/
+examples/_smoke_figs/
+examples/_run_test/
+
+# documents (keep binary documents out of the repo)
+*.docx
+
+# local agent/editor config
+.claude/
+
+# event data (large; keep out of the repo) — EXCEPT the curated sample clips
+*.raw
+!examples/data/*.raw
+!web/data/*.raw
+!web/selftest/*.raw
+*.hdf5
+*.h5
+*.bin
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,23 @@
+# gottlux — full interactive + high-performance stack (what this project is built on).
+# The headless core needs only the first block; the rest unlock the GUI, JIT speed,
+# and fast columnar data export.
+
+# --- core (headless) ---
+numpy>=2.0
+scipy>=1.11
+matplotlib>=3.8
+imageio>=2.34
+imageio-ffmpeg>=0.5
+pillow>=10.0
+
+# --- interactive GUI (OpenGL-accelerated) ---
+PySide6>=6.6
+pyqtgraph>=0.13
+PyOpenGL>=3.1          # the 3-D space-time and event-rate tower tabs hard-require it
+
+# --- performance + data ---
+numba>=0.60            # JIT for the hot kernels (graceful pure-NumPy fallback if absent)
+pandas>=2.0
+pyarrow>=14            # Parquet export
+scikit-image>=0.22
+h5py>=3.10             # HDF5 export / interop

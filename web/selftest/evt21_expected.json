@@ -1,0 +1,27 @@
+{
+  "decoder_version": 5,
+  "fmt": "evt21",
+  "n": 106800,
+  "width": 320,
+  "height": 320,
+  "n_on": 53543,
+  "t_first_us": 0,
+  "t_last_us": 1999994,
+  "t0_us": 0,
+  "sum_x_mod_2_32": 18043039,
+  "sum_y_mod_2_32": 17364732,
+  "sum_t_us_mod_2_53": 106810847198,
+  "planted_hz": 200.0,
+  "roi": [
+    140,
+    140,
+    180,
+    180
+  ],
+  "band_hz": [
+    50.0,
+    450.0
+  ],
+  "oracle_peak_hz": 200.2,
+  "oracle_snr": 4276.06
+}
