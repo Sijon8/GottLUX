@@ -23,8 +23,27 @@ fi
 
 PY="${PYTHON:-python3}"
 if ! command -v "$PY" >/dev/null 2>&1; then
-    echo "[!] $PY was not found. GottLUX needs Python 3.10 or newer, which is not"
-    echo "    part of this bundle and must already be installed."
+    PY=python
+fi
+if ! command -v "$PY" >/dev/null 2>&1; then
+    echo "[!] No python interpreter was found. GottLUX needs Python 3.10 or newer,"
+    echo "    which is not part of this bundle and must already be installed."
+    exit 1
+fi
+
+# On Windows the .bat installer is the supported path: a POSIX shell here is Git Bash
+# or WSL, and each brings its own interpreter and path translation.
+case "$("$PY" -c 'import sys; print(sys.platform)' 2>/dev/null)" in
+    win32|cygwin)
+        echo "[i] This is a Windows interpreter. install_offline.bat is the supported"
+        echo "    installer on Windows; continuing, but use the .bat if this fails."
+        echo
+        ;;
+esac
+
+# Preflight: report an incompatible bundle clearly rather than leaving pip to say
+# "no matching distribution found ... (from versions: none)".
+if ! "$PY" "$HERE/scripts/check_bundle.py" "$WHEELS"; then
     exit 1
 fi
 

@@ -38,6 +38,15 @@ if errorlevel 1 (
     set "PY=python"
 )
 
+rem Preflight: report an incompatible bundle clearly rather than leaving pip to say
+rem "no matching distribution found ... (from versions: none)".
+%PY% "%~dp0scripts\check_bundle.py" "%WHEELS%"
+if errorlevel 1 (
+    echo.
+    pause
+    exit /b 1
+)
+
 echo.
 echo Installing GottLUX from "%WHEELS%" (offline)...
 echo.
