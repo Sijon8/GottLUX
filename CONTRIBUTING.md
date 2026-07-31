@@ -145,5 +145,4 @@ pytest
 
 ---
 
-Contributions are released under the project’s [MIT License](LICENSE), and all participation is
-subject to the [Code of Conduct](CODE_OF_CONDUCT.md).
+Contributions are released under the project’s [MIT License](LICENSE).
