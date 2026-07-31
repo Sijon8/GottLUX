@@ -313,10 +313,13 @@ def test_timeline_preview_and_legend_render_light_under_the_light_theme(app):
         assert _lightness(light_preview, 4, 4) > 0.85       # the viewport's own fill
         assert _lightness(light_lanes, 4, 60) > 0.85        # the lane strip behind the ruler
         assert _lightness(light_legend, 236, 40) > 0.85     # legend page, clear of the bar
-        # and the lettering inverted with it, instead of staying pale-on-pale
-        letters = {light_legend.pixelColor(x, y).name()
-                   for y in range(4, 20) for x in range(0, 60)}
-        assert style.FG in letters
+        # and the lettering inverted with it, instead of staying pale-on-pale. Glyph
+        # rasterization differs between platforms — Linux antialiasing can leave every
+        # pixel a blend, so no pixel need land exactly on FG — hence the assertion is
+        # that the ink is dark against the light page, not that it is one exact colour.
+        ink = min(_lightness(light_legend, x, y)
+                  for y in range(4, 20) for x in range(0, 60))
+        assert ink < 0.35, f"legend lettering is not dark on the light page (darkest {ink:.2f})"
     finally:
         editor.deleteLater()
         legend.deleteLater()
