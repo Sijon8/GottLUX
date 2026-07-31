@@ -22,6 +22,7 @@ Covered here:
 import gc
 import json
 import os
+import shutil
 import sys
 
 import numpy as np
@@ -230,24 +231,21 @@ def test_fusion_wrapper_delegates(tmp_path):
 
 
 # --------------------------------------------------------------------- ECF (filter 36559)
+#: A committed HDF5 whose ``CD/events`` pipeline demands the (unregistered) ECF filter
+#: 36559, so reading it fails exactly the way a real Metavision "compress on save" file
+#: does without the codec. It ships as a fixture rather than being built per-run because
+#: only HDF5 builds that defer the filter check to write time can *create* such a dataset
+#: — others refuse outright, which would fail the test on the environment rather than on
+#: the behaviour under test. Regenerate with tests/data/README.md's recipe.
+ECF_FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "ecf_like.h5")
+
+
 def _make_ecf_like(tmp_path):
-    """An HDF5 whose ``CD/events`` pipeline demands the (unregistered) ECF filter 36559 —
-    built with the low-level API + ``write_direct_chunk``, so reading it fails exactly the
-    way a real Metavision "compress on save" file does without the codec."""
+    """A private copy of the ECF fixture (copied so cache side-effects stay in tmp_path)."""
+    if not os.path.exists(ECF_FIXTURE):
+        pytest.skip(f"missing ECF fixture: {ECF_FIXTURE}")
     path = str(tmp_path / "ecf.hdf5")
-    n = 100
-    ev = np.zeros(n, h5io.EVENT_DTYPE)
-    ev["t"] = np.arange(n)
-    with h5py.File(path, "w") as f:
-        g = f.create_group("CD")
-        space = h5py.h5s.create_simple((n,), (n,))
-        dcpl = h5py.h5p.create(h5py.h5p.DATASET_CREATE)
-        dcpl.set_chunk((n,))
-        dcpl.set_filter(36559, h5py.h5z.FLAG_MANDATORY)
-        tid = h5py.h5t.py_create(h5io.EVENT_DTYPE, logical=True)
-        dsid = h5py.h5d.create(g.id, b"events", tid, space, dcpl=dcpl)
-        h5py.Dataset(dsid).id.write_direct_chunk((0,), ev.tobytes(), filter_mask=0)
-        f.attrs["geometry"] = "320x320"
+    shutil.copyfile(ECF_FIXTURE, path)
     return path
 
 

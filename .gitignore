@@ -34,6 +34,7 @@ examples/_run_test/
 !web/selftest/*.raw
 *.hdf5
 *.h5
+!tests/data/*.h5
 *.bin
 
 # OS / editor
