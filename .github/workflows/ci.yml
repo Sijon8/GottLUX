@@ -38,8 +38,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[all,dev]"
 
+      # -rA prints a one-line result for every test; pytest-github-actions-annotate-failures
+      # (pulled in by the dev extra) republishes each failure as a job annotation, which is
+      # readable without signing in — the run log itself is not.
       - name: Run tests
-        run: pytest --cov=gottlux --cov-report=term-missing
+        run: pytest --cov=gottlux --cov-report=term-missing -rf
 
   test-windows:
     name: tests (windows, py3.13)
@@ -61,8 +64,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[all,dev]"
 
+      # -rA prints a one-line result for every test; pytest-github-actions-annotate-failures
+      # (pulled in by the dev extra) republishes each failure as a job annotation, which is
+      # readable without signing in — the run log itself is not.
       - name: Run tests
-        run: pytest --cov=gottlux --cov-report=term-missing
+        run: pytest --cov=gottlux --cov-report=term-missing -rf
 
   lint:
     name: lint & format (ruff)
