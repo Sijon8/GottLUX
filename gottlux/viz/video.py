@@ -314,6 +314,17 @@ class VideoWriter:
     def ok(self) -> bool:
         return self._w is not None
 
+    @property
+    def size(self):
+        """The clip's actual ``(width, height)`` — the even-rounded size the first frame
+        fixed — or ``None`` before any frame was written. Export provenance records it,
+        since it can differ by a pixel from the canvas geometry the frames were rendered
+        at (H.264 requires even dimensions)."""
+        if self._target_hw is None:
+            return None
+        h, w = self._target_hw
+        return (int(w), int(h))
+
     def append(self, rgb) -> bool:
         """Coerce *rgb* to the clip's even size and write it. Returns False on any failure."""
         if self._w is None or rgb is None:

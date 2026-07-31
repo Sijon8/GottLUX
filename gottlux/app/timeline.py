@@ -38,6 +38,11 @@ Exports: **Export video…** renders the whole program (segments + overlays + ti
 :func:`gottlux.io.writer.stitch_clips` exactly as before (trim + crop + gap, one monotonic
 clock), a timeline containing canvas blocks composites events into the canvas geometry
 instead, and titles plus visualization settings are omitted with the usual one-line note.
+Either export writes a **provenance folder** rather than a loose file
+(:mod:`gottlux.run.export_provenance`): the artifact, a README naming every source clip
+with its directory and SHA-256 and what was done to it, the machine-readable
+``provenance.json``, and the composition spec — so a program built from fifteen collects
+stays traceable to all fifteen files. The completion dialog reports the folder.
 
 Clips arrive through 'Add clips…', 'Add canvas block…', **or by OS drag-and-drop** —
 dropping several files at once offers 'as sequence clips' or 'as one mosaic block'.
@@ -1537,8 +1542,144 @@ class TimelineEditor(QtWidgets.QWidget):
         if out:
             self.out_edit.setText(out)
 
+    # ------------------------------------------------------------------ provenance
+    def _export_spec(self, render=False):
+        """``(spec, recs)`` for this timeline, with real file paths as the cell sources.
+
+        :func:`~gottlux.core.canvas.program_spec` namespaces its cell sources per segment
+        (they are lookup keys, not paths); rewriting each one to its recording's file path
+        is what makes the saved spec reloadable — the Canvas composer's
+        :func:`~gottlux.core.canvas.load_recordings` can find the clips again. A recording
+        with no file on disk keeps its key, and the provenance document records why.
+        *render* asks for the full rendering flatten (the overlay lane and the titles too).
+        """
+        spec, recs = engine.program_spec(self.program(), overlays=render, texts=render)
+        mapped = {}
+        for clip in spec.clips:
+            rec = recs.get(clip.source)
+            path = str(getattr(rec, "source_path", "") or "")
+            clip.source = path or clip.source
+            mapped[clip.source] = rec
+        return spec, mapped
+
+    def _write_spec(self, folder, out, render=True):
+        """Save the composition spec into *folder* beside the artifact; returns its name."""
+        spec, _recs = self._export_spec(render=render)
+        name = os.path.splitext(os.path.basename(out))[0] + engine.SPEC_SUFFIX
+        engine.save_spec(spec, os.path.join(folder, name))
+        return name
+
+    def _export_sources(self):
+        """Every distinct recording behind this timeline, with one usage row per placement.
+
+        Returns ``(sources, usage)``. ``sources`` holds one
+        :func:`~gottlux.run.export_provenance.source_facts` dict per distinct recording (a
+        file placed twice is listed once, identified by its absolute path); ``usage`` holds
+        one row per placement — every clip on the sequence lane, every clip on the overlay
+        lane, and **every cell inside every canvas block** — so a fifteen-clip timeline
+        accounts for all fifteen. The rows read the cells the compiler actually rendered,
+        so the trims, crops and rects recorded are the ones the export used.
+        """
+        from gottlux.run import export_provenance as prov
+        prog = self.program()
+        sources, usage, index = [], [], {}
+
+        def source_of(rec):
+            # A recording with no file on disk is keyed by identity: an empty
+            # ``source_path`` must not become ``abspath('')`` — the working directory —
+            # which would collapse every in-memory recording into one bogus source row.
+            raw = str(getattr(rec, "source_path", "") or "")
+            path = os.path.abspath(raw) if raw else ""
+            key = os.path.normcase(path) if path else id(rec)
+            if key not in index:
+                index[key] = len(sources) + 1
+                sources.append(prov.source_facts(path, rec=rec))
+            return index[key]
+
+        gap = float(self.gap.value())
+        lane = [i for i, c in enumerate(self.clips)
+                if not c.get("overlay") and i in self._segments]
+        over_items = [c for c in self.clips if c.get("overlay") and c["kind"] == "clip"
+                      and c.get("rec") is not None]
+        over_cells = dict(zip((id(c) for c in over_items), prog.overlay_clips))
+        for i, c in enumerate(self.clips):
+            if c["kind"] == "title":
+                continue
+            seg = self._segments.get(i)
+            span = [seg.t0_s, seg.t1_s] if seg is not None else None
+            after = gap if (gap > 0 and lane and i in lane and i != lane[-1]) else None
+            if c["kind"] == "block":
+                cells = seg.spec.clips[:seg.n_own] if seg is not None else c["spec"].clips
+                lookup = seg.recs if seg is not None else c["recs"]
+                for cell in cells:
+                    rec = lookup.get(cell.source)
+                    if rec is None:
+                        continue
+                    usage.append(prov.cell_usage(
+                        cell, source_of(rec), name=cell.source.split(":", 1)[-1],
+                        lane="sequence", block=c["name"], program_span_s=span,
+                        gap_after_s=after))
+                continue
+            rec = c.get("rec")
+            if rec is None:
+                continue
+            cell = (over_cells.get(id(c)) if c.get("overlay")
+                    else (seg.spec.clips[0] if (seg is not None and seg.n_own) else None))
+            usage.append(prov.cell_usage(
+                cell if cell is not None else c["cell"], source_of(rec), name=c["name"],
+                lane="overlay" if c.get("overlay") else "sequence",
+                trim_in_s=c["t0"], trim_out_s=c["t1"], program_span_s=span,
+                gap_after_s=None if c.get("overlay") else after))
+        return sources, usage
+
+    def _export_texts(self):
+        """The title items, described for the provenance document (they render in video)."""
+        out = []
+        for c in self.clips:
+            if c["kind"] != "title":
+                continue
+            vals = c["title"]
+            out.append({"text": str(vals.get("text", "")),
+                        "kind": ("title slide (takes a sequence slot)"
+                                 if vals.get("kind") == "slide"
+                                 else "running title (overlay lane)"),
+                        "duration_s": round(float(c["dur"]), 3),
+                        "anchor": str(vals.get("anchor", "")),
+                        "font_size_px": int(vals.get("font_size_px", 0))})
+        return out
+
+    def _export_settings(self, **extra):
+        """The full parameter list the provenance document prints."""
+        prog, wh = self.program(), self._canvas_wh()
+        settings = {
+            "Project canvas": f"{self.canvas_cb.currentText()} → {wh[0]} × {wh[1]} px",
+            "Program duration": f"{prog.duration_s:.3f} s",
+            "Program segments": len(prog.segments),
+            "Gap between sequence items": f"{self.gap.value():g} s",
+            "Sequence clips": sum(1 for c in self.clips
+                                  if c["kind"] == "clip" and not c.get("overlay")),
+            "Canvas blocks": sum(1 for c in self.clips if c["kind"] == "block"),
+            "Overlay-lane clips": sum(1 for c in self.clips
+                                      if c["kind"] == "clip" and c.get("overlay")),
+            "Title items": sum(1 for c in self.clips if c["kind"] == "title"),
+        }
+        settings.update({k: v for k, v in extra.items() if v is not None})
+        return settings
+
+    def _write_provenance(self, folder, kind, artifact, settings, spec=None, steps=(),
+                          warnings=()):
+        """Write the folder's README.md + provenance.json for one finished export."""
+        from gottlux.run import export_provenance as prov
+        sources, usage = self._export_sources()
+        return prov.write_provenance(
+            folder, kind, artifact, sources, settings,
+            extra={"usage": usage, "texts": self._export_texts(),
+                   "warnings": list(warnings),
+                   "reproduce": {"spec": spec, "steps": list(steps)}})
+
+    # ------------------------------------------------------------------ exports
     def _export_video(self):
-        """Render the whole program — segments, overlays, titles — to an MP4."""
+        """Render the whole program — segments, overlays, titles — into an export folder."""
         prog = self.program()
         if not prog.segments:
             self.status.setText("Add at least one clip.")
@@ -1550,24 +1691,47 @@ class TimelineEditor(QtWidgets.QWidget):
         if not out:
             return
         from gottlux.io.paths import open_in_file_browser
+        from gottlux.run import export_provenance as prov
+        folder = prov.export_folder(out)
+        target = prov.artifact_path(folder, out)
         try:
             res = with_progress(self, "Exporting timeline video",
-                                lambda cb: engine.export_program_video(prog, out, fps=30.0,
+                                lambda cb: engine.export_program_video(prog, target,
+                                                                       fps=30.0,
                                                                        progress=cb),
                                 label="Rendering frames…")
         except Exception as e:
+            prov.discard_folder(folder)
             QtWidgets.QMessageBox.critical(self, "Export video", str(e))
             return
         if not res:
+            prov.discard_folder(folder)
             QtWidgets.QMessageBox.warning(
                 self, "Export video",
                 "Encoding unavailable — install imageio-ffmpeg for MP4 export.")
             return
-        open_in_file_browser(os.path.dirname(os.path.abspath(res)))
+        spec = self._write_spec(folder, out, render=True)
+        self._write_provenance(
+            folder, "Timeline video (MP4)",
+            prov.artifact_facts(res["path"], frames=res["frames"], fps=res["fps"],
+                                duration_s=res["duration_s"], width=res["width"],
+                                height=res["height"], canvas=res["canvas"],
+                                codec=res["codec"]),
+            self._export_settings(**{"Frame rate": f"{res['fps']:g} fps",
+                                     "Codec": res["codec"]}),
+            spec=spec,
+            steps=[f"Open the Canvas composer, load `{spec}`, and use 'Export video…' — "
+                   "the spec carries every cell, its clock and its look.",
+                   "Or rebuild the timeline: add the sources in the order listed above, "
+                   "apply each row's trim, crop and settings, set the project canvas and "
+                   "gap from the settings table, then use 'Export video…'."])
+        open_in_file_browser(folder)
         QtWidgets.QMessageBox.information(
             self, "Export video",
             f"Rendered {len(prog.segments)} segment(s) · {prog.duration_s:.2f} s "
-            f"({prog.width}×{prog.height}) →\n{res}")
+            f"({prog.width}×{prog.height}) →\n{folder}\n\n"
+            f"The folder holds {os.path.basename(target)}, README.md, provenance.json "
+            f"and {spec}.")
         self.done.emit()
 
     def _export_raw(self):
@@ -1590,40 +1754,87 @@ class TimelineEditor(QtWidgets.QWidget):
         if not out.lower().endswith(".raw"):
             out += ".raw"
         n_over = sum(1 for c in self.clips if c.get("overlay") and c["kind"] != "title")
-        note = ((f"\n({n_over} overlay clip(s) not included — a .raw carries the "
-                 "sequential lane)") if n_over else "")
-        note += (f"\n({engine.text_omission_note(len(slides))})" if slides else "")
+        notes = ([f"{n_over} overlay clip(s) not included — a .raw carries the "
+                  "sequential lane"] if n_over else [])
+        notes += [engine.text_omission_note(len(slides))] if slides else []
+        note = "".join(f"\n({n})" for n in notes)
+        from gottlux.run import export_provenance as prov
+        folder = prov.export_folder(out)
+        target = prov.artifact_path(folder, out)
         try:
-            msg = (self._composite_raw(out) if blocks else self._stitch_raw(out, plain))
+            msg = (self._composite_raw(target, folder, notes) if blocks
+                   else self._stitch_raw(target, folder, plain, notes))
         except Exception as e:
+            prov.discard_folder(folder)
             QtWidgets.QMessageBox.critical(self, "Export .raw", str(e)); return
         from gottlux.io.paths import open_in_file_browser
-        open_in_file_browser(os.path.dirname(os.path.abspath(out)))
-        QtWidgets.QMessageBox.information(self, "Export .raw", msg + note)
+        open_in_file_browser(folder)
+        QtWidgets.QMessageBox.information(
+            self, "Export .raw", msg + note
+            + f"\n\nExport folder (artifact + README.md + provenance.json):\n{folder}")
         self.done.emit()
 
-    def _stitch_raw(self, out, plain):
+    def _stitch_raw(self, out, folder, plain, notes=()):
         """The plain-sequence path: clips stitched end-to-end on one monotonic clock."""
         from gottlux.io import writer
+        from gottlux.run import export_provenance as prov
         specs = [(c["rec"], c["t0"], c["t1"], c.get("roi")) for c in plain]
         res = with_progress(self, "Stitching clips → .raw",
                             lambda cb: writer.stitch_clips(out, specs,
                                                            gap_s=self.gap.value(),
                                                            progress=cb),
                             label="Stitching the clips…")
+        rec0 = plain[0]["rec"]
+        spec = self._write_spec(folder, out, render=True)
+        self._write_provenance(
+            folder, "Timeline .raw (stitched sequence)",
+            prov.artifact_facts(out, events=res["n_events"],
+                                duration_s=res["duration_s"],
+                                width=int(rec0.width), height=int(rec0.height)),
+            self._export_settings(**{
+                "Event export path": "stitch — clips laid end to end on one monotonic clock",
+                "Sensor geometry": f"{rec0.width} × {rec0.height} px (unchanged)",
+                "Stitched segments": len(res["segments"])}),
+            spec=spec,
+            steps=["Load the sources listed above, set each clip's trim and crop from the "
+                   "usage rows and the gap from the settings table, then use "
+                   "'Export .raw…' on the Timeline tab.",
+                   f"The saved `{spec}` describes the same composition for **rendering** "
+                   "(the .raw itself carries events, not the per-clip look)."],
+            warnings=notes)
         return (f"Stitched {len(specs)} clip(s) → {os.path.basename(out)}\n"
                 f"{res['n_events']:,} events · {res['duration_s']:.2f} s")
 
-    def _composite_raw(self, out):
+    def _composite_raw(self, out, folder, notes=()):
         """The canvas path: a timeline holding mosaics re-encodes into canvas geometry."""
-        spec, recs = engine.program_spec(self.program())
+        from gottlux.run import export_provenance as prov
+        spec, recs = self._export_spec()
         res = with_progress(self, "Compositing the timeline → .raw",
                             lambda cb: engine.export_raw(spec, recs, out, progress=cb),
                             label="Re-encoding events…")
+        # export_raw already wrote the composition beside the .raw — that one sidecar,
+        # now inside the export folder, is the spec; no second copy is written.
+        sidecar = os.path.basename(res["sidecar"])
+        self._write_provenance(
+            folder, "Timeline .raw (canvas composite)",
+            prov.artifact_facts(res["path"], events=res["n_events"],
+                                duration_s=res["duration_s"], width=res["width"],
+                                height=res["height"],
+                                canvas=(res["width"], res["height"])),
+            self._export_settings(**{
+                "Event export path": "canvas composite — events re-encoded into the "
+                                     "canvas geometry",
+                "Composited cells": len(spec.clips)}),
+            spec=sidecar,
+            steps=[f"Open the Canvas composer and load `{sidecar}` to re-render the "
+                   "styled composition.",
+                   "Re-encode the events again with 'Export .raw…' from the same "
+                   "composition — the cell rects and clocks above are the full recipe."],
+            warnings=list(notes) + list(res.get("warnings") or []))
         return (f"Composited {len(spec.clips)} cell(s) → {os.path.basename(out)}\n"
                 f"{res['n_events']:,} events ({res['width']}×{res['height']}, "
                 f"{res['duration_s']:.2f} s)\n"
-                f"Spec sidecar: {os.path.basename(res['sidecar'])}\n"
+                f"Spec sidecar: {sidecar}\n"
                 "Note: the .raw carries events only — per-clip colormaps/tone-maps apply "
                 "to rendering, not to the event stream.")
 

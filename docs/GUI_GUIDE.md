@@ -335,12 +335,44 @@ canvas (Full, 1/2 horizontal, 1/2 vertical, 1/3, 1/4 quadrant, 2/3), drags snap 
 by frame to an MP4. **Export .raw…** stays events-only: a plain sequence stitches end-to-end into
 one combined, byte-valid EVT2.1 `.raw` whose segments share a single monotonic clock (trim + crop
 + gap, exactly as before), while a timeline containing canvas blocks composites the events into the
-canvas geometry instead and writes the composition JSON as a sidecar. Titles and per-clip
+canvas geometry instead and writes the composition JSON as its sidecar. Titles and per-clip
 visualization settings are render-only, so the event export notes them rather than writing them;
 the result converts to HDF5 with `gottlux <out>.raw --to-hdf5` like any other `.raw`.
 
 Loading a recording seeds an empty timeline with that recording as the first clip; a timeline
 already being edited is left untouched.
+
+### Export provenance folders
+
+Every export writes a **folder**, not a loose file. Choosing `program.mp4` produces
+`program_export_<UTC-stamp>/` beside the chosen location, containing:
+
+| File | Role |
+| --- | --- |
+| `program.mp4` / `program.raw` | the artifact, under the name that was chosen for it |
+| `README.md` | the human-readable provenance document |
+| `provenance.json` | the same facts, machine-readable (`schema_version`, `artifact`, `sources[]`, `usage[]`, `settings`, `files[]`) |
+| `program.gottlux-canvas.json` | the composition spec, where the export path has one — reload it to re-render |
+
+The README states, in order: **what was produced** (file, kind, size, duration, frame count,
+canvas geometry, fps, codec) · **when**, with which GottLUX version and platform · the **source
+recordings**, one table row per clip giving its file name, absolute directory, size, SHA-256
+(short and full), format, resolution, event count and duration · **how each source was used**
+— per clip, whichever of trim in/out, source ROI crop, destination rect on the canvas, time
+offset, time scale, accumulation, mode, colormap, tone-map and loop applies to that export path
+· the full **export settings** · any **titles/text**, noted as rendering in video only ·
+**how to reproduce it** · and **every file in the folder** with its role.
+
+Sources are counted per *distinct recording*: a clip placed twice is one source row and two
+usage rows, and clips inside a canvas block count individually — a fifteen-clip timeline lists
+all fifteen files. Facts are read as cheaply as possible: a loaded recording answers for itself,
+an on-disk source falls back to its decode cache and then to the container header, and no
+provenance write ever forces a decode. A source that has moved or become unreadable is recorded
+as missing rather than aborting the export.
+
+The completion dialog reports the folder path and opens it in the file browser. View captures
+(**Capture view…**) use the same convention: the MP4, the optional poster PNG, and the two
+documents — the capture's former `*_manifest.json` is merged into `provenance.json`.
 
 ---
 
@@ -355,9 +387,11 @@ can play beside a 10× slow-motion crop of the same moment. A shared transport p
 scrubs the canvas timeline. Compositions save/load as a small JSON spec
 (`.gottlux-canvas.json`) and export as an **MP4** (rendered frames) or as one composited
 EVT2.1 **`.raw`** — the events geometrically remapped into their cells and rescaled onto
-the canvas clock, with the spec written as a sidecar so the styled view stays
+the canvas clock, with the spec written into the export folder so the styled view stays
 reproducible. (An event file carries events, not rendering: colormap/tone-map/
-accumulation apply only at render time, which is exactly what the sidecar preserves.)
+accumulation apply only at render time, which is exactly what the spec preserves.) Both
+exports land in a provenance folder documenting every cell's source recording and
+settings — see [Export provenance folders](#export-provenance-folders).
 The cell stage is a reusable widget, so the Timeline tab's inline arrange mode is
 *literally* this composer's cells — this window remains the place to build a standalone
 composition and save/load its spec.

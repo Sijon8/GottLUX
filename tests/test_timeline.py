@@ -522,9 +522,11 @@ def test_timeline_running_title_renders_over_every_segment(app):
 
 
 # ====================================================================== exports
-def test_timeline_export_raw_matches_the_stitcher_byte_for_byte(app, tmp_path, monkeypatch):
+def test_timeline_export_raw_matches_the_stitcher_byte_for_byte(app, tmp_path, monkeypatch,
+                                                                exported):
     """On a plain sequence, 'Export .raw…' still IS the stitch: trim + crop + gap, one
-    monotonic clock, bytes identical to calling ``stitch_clips`` directly."""
+    monotonic clock, bytes identical to calling ``stitch_clips`` directly — the artifact
+    now sitting inside the export's provenance folder."""
     from gottlux.app.timeline import TimelineEditor
     from gottlux.io import writer
 
@@ -540,19 +542,25 @@ def test_timeline_export_raw_matches_the_stitcher_byte_for_byte(app, tmp_path, m
     ed.out_edit.setText(out)
     _quiet_exports(monkeypatch, out)
     ed._export_raw()
-    assert os.path.exists(out)
+    folder = exported(out)
 
     ref = str(tmp_path / "ref.raw")
     writer.stitch_clips(ref, [(c["rec"], c["t0"], c["t1"], c.get("roi")) for c in ed.clips],
                         gap_s=0.05)
-    with open(out, "rb") as f:
+    with open(folder.artifact, "rb") as f:
         written = f.read()
     with open(ref, "rb") as f:
         expected = f.read()
     assert written == expected
+    # the trim and the crop the stitch applied are the ones the usage rows record
+    assert folder.usage[0]["trim_in_s"] == pytest.approx(ed.clips[0]["t0"])
+    assert folder.usage[0]["trim_out_s"] == pytest.approx(ed.clips[0]["t1"])
+    assert folder.usage[0]["roi"] == [8, 8, 200, 220]
+    assert folder.record["settings"]["Gap between sequence items"] == "0.05 s"
 
 
-def test_timeline_export_raw_skips_title_slide_with_note(app, tmp_path, monkeypatch):
+def test_timeline_export_raw_skips_title_slide_with_note(app, tmp_path, monkeypatch,
+                                                         exported):
     """The .raw export writes only the real clips — a title slide contributes no events —
     and the completion dialog carries the one-line omission note. A sequence lane holding
     only titles refuses to export."""
@@ -577,24 +585,28 @@ def test_timeline_export_raw_skips_title_slide_with_note(app, tmp_path, monkeypa
     monkeypatch.setattr(paths, "open_in_file_browser", lambda *args, **k: None)
     ed._export_raw()
 
-    assert os.path.exists(out)
+    folder = exported(out)
     ref = str(tmp_path / "ref.raw")                     # the clip alone, same trim
     writer.stitch_clips(ref, [(a, ed.clips[0]["t0"], ed.clips[0]["t1"], None)])
-    assert load(out).n == load(ref).n > 0               # the slide added nothing
+    assert load(folder.artifact).n == load(ref).n > 0   # the slide added nothing
     assert infos and "1 text item(s) omitted" in infos[0][2]
+    # the omitted slide is still on the record — as a warning, and in the texts section
+    assert any("text item(s) omitted" in w for w in folder.record["warnings"])
+    assert [t["text"] for t in folder.record["texts"]] == ["Intro"]
 
-    # only titles on the sequence lane → nothing to write
+    # only titles on the sequence lane → nothing to write, and no folder left behind
     ed2 = TimelineEditor()
     ed2._append_title(_slide_vals("Only"))
     ed2.out_edit.setText(str(tmp_path / "empty.raw"))
     ed2._export_raw()
     assert not os.path.exists(str(tmp_path / "empty.raw"))
+    exported(str(tmp_path / "empty.raw"), exists=False)
     assert "Nothing to stitch" in ed2.status.text()
 
 
-def test_timeline_export_raw_composites_canvas_blocks(app, tmp_path, monkeypatch):
+def test_timeline_export_raw_composites_canvas_blocks(app, tmp_path, monkeypatch, exported):
     """A timeline holding a canvas block re-encodes the events into the canvas geometry
-    instead of stitching, and writes the spec sidecar alongside."""
+    instead of stitching, and the one spec sidecar lands inside the export folder."""
     from gottlux.app.timeline import TimelineEditor
     from gottlux.core import canvas as cv
     from gottlux.io.recording import load
@@ -608,17 +620,79 @@ def test_timeline_export_raw_composites_canvas_blocks(app, tmp_path, monkeypatch
     _quiet_exports(monkeypatch, out)
     ed._export_raw()
 
-    assert os.path.exists(out)
-    r = load(out)
+    folder = exported(out)
+    r = load(folder.artifact)
     assert (r.width, r.height) == ed._canvas_wh()
     assert r.n > 0
-    sidecar = os.path.splitext(out)[0] + cv.SPEC_SUFFIX
-    assert os.path.exists(sidecar)
+    sidecar = folder.spec_name()
+    # exactly one spec: export_raw's own sidecar, inside the folder — no second copy
+    assert sidecar and sum(n.endswith(cv.SPEC_SUFFIX) for n in folder.names) == 1
+    assert not os.path.exists(os.path.splitext(out)[0] + cv.SPEC_SUFFIX)
     # the flattened program carries the plain clip's cell plus the block's two cells
-    assert len(cv.load_spec(sidecar).clips) == 3
+    assert len(cv.load_spec(os.path.join(folder.folder, sidecar)).clips) == 3
+    # and the README points at that spec as the way to re-render it
+    assert sidecar in folder.readme
+    assert folder.record["reproduce"]["spec"] == sidecar
 
 
-def test_timeline_export_video_renders_the_program(app, tmp_path, monkeypatch):
+def test_timeline_export_documents_every_source_of_a_multi_clip_program(
+        app, tmp_path, monkeypatch, exported):
+    """The motivating case: a program assembled from clips collected separately stays
+    traceable to every last file.
+
+    Six distinct ``.raw`` recordings — three on the sequence lane, one on the overlay
+    lane, two more inside a canvas block — must yield six source rows (each named by its
+    absolute path and identified by its digest) and six usage rows, one per placement.
+    Nothing may be merged away, and a clip inside a block counts exactly as much as one
+    sitting on the lane.
+    """
+    from gottlux.app.timeline import TimelineEditor
+    from gottlux.io.recording import load
+
+    paths = [_write_raw(_scene(0.15, 60 + i, f"clip{i}"), tmp_path / f"clip{i}.raw")
+             for i in range(6)]
+    recs = [load(p) for p in paths]
+    ed = TimelineEditor(recordings=recs[:4])
+    ed.select(3)
+    ed.overlay_chk.setChecked(True)                  # the fourth clip rides the overlay
+    ed.append_block_recordings(recs[4:])             # two more sources inside one block
+
+    out = str(tmp_path / "program.raw")
+    ed.out_edit.setText(out)
+    _quiet_exports(monkeypatch, out)
+    ed._export_raw()
+    folder = exported(out)
+
+    # one row per distinct recording — six files in, six sources out
+    assert len(folder.sources) == 6
+    assert {s["name"] for s in folder.sources} == {os.path.basename(p) for p in paths}
+    by_name = {s["name"]: s for s in folder.sources}
+    for p, rec in zip(paths, recs):
+        assert os.path.abspath(p) in folder.readme   # the README names every path
+        s = by_name[os.path.basename(p)]
+        assert s["path"] == os.path.abspath(p) and s["directory"] == str(tmp_path)
+        assert s["available"] and len(s["sha256"]) == 64 and s["format"] == "evt21"
+        assert (s["width"], s["height"]) == (rec.width, rec.height)
+        assert s["events"] == rec.n and s["duration_s"] == pytest.approx(rec.duration_s,
+                                                                        abs=1e-5)
+        assert s["sha256"][:12] in folder.readme     # the table's short digest
+
+    # one usage row per placement, each resolving to a distinct source row
+    assert len(folder.usage) == 6
+    assert sorted(r["source"] for r in folder.usage) == [1, 2, 3, 4, 5, 6]
+    lanes = [r["lane"] for r in folder.usage]
+    assert lanes.count("overlay") == 1 and lanes.count("sequence") == 5
+    # the block's two cells say which block they came from and where they land
+    inblock = [r for r in folder.usage if r.get("block")]
+    assert len(inblock) == 2
+    assert all(len(r["dest_rect"]) == 4 and r["dest_rect"][2] > 0 for r in inblock)
+    assert folder.record["settings"]["Canvas blocks"] == 1
+    assert folder.record["settings"]["Overlay-lane clips"] == 1
+
+
+def test_timeline_export_video_renders_the_program(app, tmp_path, monkeypatch, exported):
+    """The video export writes the MP4 inside a folder holding the README, the machine-
+    readable twin, and the spec that re-renders it."""
     from gottlux.app.timeline import TimelineEditor
     from gottlux.viz import video
     if not video.ffmpeg_available():
@@ -631,4 +705,14 @@ def test_timeline_export_video_renders_the_program(app, tmp_path, monkeypatch):
     out = str(tmp_path / "timeline.mp4")
     _quiet_exports(monkeypatch, out)
     ed._export_video()
-    assert os.path.exists(out) and os.path.getsize(out) > 0
+
+    folder = exported(out)
+    assert os.path.getsize(folder.artifact) > 0
+    assert folder.spec_name() is not None
+    assert folder.record["kind"] == "Timeline video (MP4)"
+    assert folder.record["artifact"]["canvas"] == [640, 640]
+    assert folder.record["artifact"]["frames"] > 0
+    assert folder.record["artifact"]["fps"] == 30.0
+    # the running title renders in video, so it is on the record as a text item
+    assert [t["text"] for t in folder.record["texts"]] == ["GottLUX"]
+    assert "Text is a **render-time** item" in folder.readme

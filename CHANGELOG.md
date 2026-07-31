@@ -5,6 +5,50 @@ All notable changes to GottLUX are documented here. The project follows
 
 ## [Unreleased]
 
+### Added
+
+- **Export provenance folders.** Every video and event export now writes a
+  self-documenting **folder** — `<stem>_export_<UTC-stamp>/` beside the chosen save
+  location — instead of a loose file: the artifact under its own name, a human-readable
+  `README.md`, a machine-readable `provenance.json`, and the `.gottlux-canvas.json`
+  composition spec where the export path has one, so the result is re-renderable. The
+  README states what was produced (kind, size, duration, frame count, canvas geometry,
+  fps, codec), when it was produced and with which GottLUX version and platform, the
+  **source recordings** as one table row per clip (file name, absolute directory, size,
+  SHA-256, container format, sensor resolution, event count, duration), **how each source
+  was used** (trim in/out, source ROI crop, destination rect, time offset, time scale,
+  accumulation, mode, colormap, tone-map, loop — whichever applies to that path), the full
+  export settings, any titles (noted as rendering in video only), how to reproduce the
+  result, and the role of every file in the folder. Sources are counted per distinct
+  recording, and clips inside a canvas block count individually, so a fifteen-clip
+  timeline assembled from collects made on different days lists all fifteen files.
+  Completion dialogs report the folder path. New module `gottlux.run.export_provenance`
+  (`export_folder`, `source_facts`, `write_provenance`), following the conventions
+  `gottlux.run.tool_export` already used for standalone-tool bundles.
+- **Cheap source facts.** `source_facts()` gathers geometry, format, event count and
+  duration as cheaply as the situation allows — a loaded recording answers for itself, an
+  on-disk source falls back to an *existing* decode cache and then to the container header
+  — and never forces a decode. A missing or unreadable source is recorded as such rather
+  than raised on, so an export is never lost to a broken source path.
+
+### Changed
+
+- `core.canvas.export_video` / `export_program_video` return a facts dict (written `path`,
+  `frames`, `fps`, `duration_s`, encoded `width`/`height`, `canvas`, `codec`, `warnings`)
+  rather than a bare path, so callers can document an export without re-opening the file.
+  `None` still means the export did not happen, so `if not result:` is unchanged.
+- The screen/view capture (`Capture view…`) folds its poster and its former standalone
+  `*_manifest.json` into the same folder convention: the manifest's title, view, window,
+  fps, region and context fields are now the provenance record's settings, leaving one
+  export convention across the suite instead of two.
+
+### Fixed
+
+- Timeline and Canvas exports documented every in-memory recording (one with no file on
+  disk) as a single shared source pointing at the working directory, because an empty
+  source path was passed through `os.path.abspath()`. Such recordings are now keyed by
+  identity and recorded as having no file.
+
 ## [1.0.0] — 2026-07-29
 
 The first public release of **GottLUX** — an open-source suite for processing

@@ -278,7 +278,11 @@ def test_export_video_writes_mp4_when_ffmpeg_available(tmp_path):
     ])
     out = str(tmp_path / "canvas.mp4")
     res = cv.export_video(spec, {"n": rec}, out, fps=10.0, duration_s=0.4)
-    assert res == out and os.path.exists(out) and os.path.getsize(out) > 0
+    assert res["path"] == out and os.path.exists(out) and os.path.getsize(out) > 0
+    # the facts a caller needs to document the file without re-opening it
+    assert res["frames"] == 4 and res["fps"] == 10.0
+    assert res["duration_s"] == pytest.approx(0.4) and res["canvas"] == (64, 48)
+    assert (res["width"], res["height"]) == (64, 48) and res["warnings"] == []
 
 
 def test_export_video_renders_text_frames_when_ffmpeg_available(tmp_path):
@@ -295,8 +299,9 @@ def test_export_video_renders_text_frames_when_ffmpeg_available(tmp_path):
     out = str(tmp_path / "titled.mp4")
     fracs = []
     res = cv.export_video(spec, {"n": rec}, out, fps=10.0, progress=fracs.append)
-    assert res == out and os.path.getsize(out) > 0
+    assert res["path"] == out and os.path.getsize(out) > 0
     assert len(fracs) == 5          # the slide's span (0.5 s at 10 fps) set the timeline
+    assert res["frames"] == 5
 
 
 # ------------------------------------------------------------------ layout math (pure)
@@ -504,8 +509,9 @@ def test_export_program_video_when_ffmpeg_available(tmp_path):
     out = str(tmp_path / "program.mp4")
     fracs = []
     res = cv.export_program_video(prog, out, fps=10.0, progress=fracs.append)
-    assert res == out and os.path.getsize(out) > 0
+    assert res["path"] == out and os.path.getsize(out) > 0
     assert len(fracs) == 5                       # 0.5 s of program at 10 fps
+    assert res["frames"] == 5 and res["canvas"] == (48, 48)
 
 
 # ------------------------------------------------------------------ GUI (offscreen)
@@ -602,9 +608,9 @@ def test_canvas_composer_drag_drop_and_text_items(tmp_path):
     win.close()
 
 
-def test_canvas_composer_export_raw_surfaces_text_note(tmp_path, monkeypatch):
+def test_canvas_composer_export_raw_surfaces_text_note(tmp_path, monkeypatch, exported):
     """The composer's .raw export completion dialog carries the text-omission note when
-    the composition holds text items (the sidecar still records them)."""
+    the composition holds text items (the spec inside the folder still records them)."""
     pytest.importorskip("PySide6")
     from PySide6 import QtWidgets
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
@@ -625,7 +631,109 @@ def test_canvas_composer_export_raw_surfaces_text_note(tmp_path, monkeypatch):
                         staticmethod(lambda *args, **k: pytest.fail(f"export failed: {args}")))
     monkeypatch.setattr(paths, "open_in_file_browser", lambda *args, **k: None)
     win._export_raw()
-    assert os.path.exists(out)
+    folder = exported(out)
     assert infos and "1 text item(s) omitted" in infos[0][2]
-    assert len(cv.load_spec(os.path.splitext(out)[0] + cv.SPEC_SUFFIX).texts) == 1
+    sidecar = folder.spec_name()
+    assert sidecar and len(cv.load_spec(os.path.join(folder.folder, sidecar)).texts) == 1
+    # the folder path is what the completion dialog reports
+    assert folder.folder in infos[0][2]
+    win.close()
+
+
+def _quiet_composer(monkeypatch, out):
+    """Point the composer's save dialog at *out* and silence its side effects."""
+    from PySide6 import QtWidgets
+
+    import gottlux.io.paths as paths
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (out, "")))
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information",
+                        staticmethod(lambda *a, **k: None))
+    monkeypatch.setattr(QtWidgets.QMessageBox, "critical",
+                        staticmethod(lambda *a, **k: pytest.fail(f"export failed: {a}")))
+    monkeypatch.setattr(paths, "open_in_file_browser", lambda *a, **k: None)
+
+
+def test_canvas_composer_export_raw_documents_every_cell(tmp_path, monkeypatch, exported):
+    """The composer's export folder accounts for every placed cell.
+
+    A recording placed in two cells is **one** source row and **two** usage rows, and each
+    usage row carries that cell's destination rect, source ROI, time offset, time scale,
+    accumulation, mode, colormap, tone-map and loop flag — the settings that decide what
+    the cell looked like.
+    """
+    pytest.importorskip("PySide6")
+    from PySide6 import QtWidgets
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    assert app is not None
+    from gottlux.app.canvas import CanvasComposerWindow
+
+    win = CanvasComposerWindow()
+    shared = _noise_rec(4000, 0.2, w=32, h=32, seed=21, name="shared")
+    other = _noise_rec(4000, 0.2, w=32, h=32, seed=22, name="other")
+    win.add_clip_recording(shared, source="shared", rect=(0, 0, 64, 48))
+    win.add_clip_recording(shared, source="shared_again", rect=(64, 0, 64, 48))
+    win.add_clip_recording(other, source="other", rect=(0, 48, 64, 48))
+    tuned = win.spec.clips[1]                       # give the second placement a full look
+    tuned.roi = (4, 5, 20, 21)
+    tuned.t_offset_s, tuned.time_scale, tuned.accumulation_s = 0.25, 0.5, 0.02
+    tuned.mode, tuned.colormap, tuned.tonemap, tuned.loop = "polarity", "coolwarm", "log", True
+
+    out = str(tmp_path / "cells.raw")
+    _quiet_composer(monkeypatch, out)
+    win._export_raw()
+    folder = exported(out)
+
+    # two recordings, three placements
+    assert len(folder.sources) == 2 and len(folder.usage) == 3
+    assert sorted(r["source"] for r in folder.usage) == [1, 1, 2]
+    # the in-memory recordings own no file, and the record says so rather than inventing one
+    assert all(s["path"] is None and s["sha256"] is None for s in folder.sources)
+    assert all("in-memory recording" in s["note"] for s in folder.sources)
+
+    row = folder.usage[1]
+    assert row["dest_rect"] == [64, 0, 64, 48] and row["roi"] == [4, 5, 20, 21]
+    assert row["t_offset_s"] == pytest.approx(0.25)
+    assert row["time_scale"] == pytest.approx(0.5)
+    assert row["accumulation_s"] == pytest.approx(0.02)
+    assert (row["mode"], row["colormap"], row["tonemap"]) == ("polarity", "coolwarm", "log")
+    assert row["loop"] is True
+    # and the README spells the same cell out in words
+    assert "x 64, y 0, 64 × 48 px" in folder.readme
+    assert "x 4–20, y 5–21 px" in folder.readme
+    assert folder.record["kind"] == "Canvas .raw (composited events)"
+    win.close()
+
+
+def test_canvas_composer_export_video_writes_a_provenance_folder(tmp_path, monkeypatch,
+                                                                 exported):
+    """The composer's video export lands the MP4 in a folder beside the README, the
+    machine-readable twin, and the spec that re-renders it."""
+    pytest.importorskip("PySide6")
+    from gottlux.viz import video
+    if not video.ffmpeg_available():
+        pytest.skip("imageio-ffmpeg not available")
+    from PySide6 import QtWidgets
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    assert app is not None
+    from gottlux.app.canvas import CanvasComposerWindow
+
+    win = CanvasComposerWindow()
+    win.canvas_w.setValue(64)
+    win.canvas_h.setValue(48)
+    win.add_clip_recording(_noise_rec(3000, 0.2, w=32, h=32, seed=23), source="n",
+                           rect=(0, 0, 64, 48))
+    out = str(tmp_path / "composition.mp4")
+    _quiet_composer(monkeypatch, out)
+    win._export_video()
+    folder = exported(out)
+
+    assert os.path.getsize(folder.artifact) > 0
+    assert folder.spec_name() is not None
+    art = folder.record["artifact"]
+    assert art["frames"] > 0 and art["fps"] == 30.0 and art["canvas"] == [64, 48]
+    assert art["codec"] == "H.264 (libx264) in MP4"
+    assert folder.record["kind"] == "Canvas video (MP4)"
+    # the files table accounts for everything actually in the folder
+    assert {f["name"] for f in folder.record["files"]} == set(folder.names)
     win.close()

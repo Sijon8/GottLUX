@@ -8,6 +8,9 @@ loop), and look (accumulation mode + window, tone-map, colormap) — applied liv
 transport plays and scrubs the canvas timeline (the longest clip extent). Compositions
 save/load as ``.gottlux-canvas.json`` and export as an MP4 (rendered frames) or as a
 single composited EVT2.1 ``.raw`` (re-encoded events; the spec rides along as a sidecar).
+Both exports land in a **provenance folder** (:mod:`gottlux.run.export_provenance`) — the
+artifact, the spec, a README listing every cell's source recording with its directory and
+SHA-256 and how that cell was placed, and the machine-readable ``provenance.json``.
 
 Recordings arrive through the 'Add clips…' dialog **or by OS drag-and-drop** — dropped
 ``.raw``/``.h5``/``.hdf5`` files and capture folders become new cells through the same
@@ -1004,6 +1007,60 @@ class CanvasComposerWindow(QtWidgets.QMainWindow):
             msg += f" — {len(missing)} source(s) not found: " + ", ".join(missing)
         self.statusBar().showMessage(msg)
 
+    # ================================================================== provenance
+    def _export_sources(self):
+        """Every distinct cell recording, with one usage row per placed cell.
+
+        Returns ``(sources, usage)`` — the same shape the Timeline builds, so both
+        composers document their exports identically: a recording placed in two cells is
+        one source row and two usage rows.
+
+        A recording with no file on disk is keyed by identity, never by path: an empty
+        ``source_path`` must not become ``abspath('')`` — the working directory — which
+        would document every in-memory recording as one bogus shared source.
+        """
+        from gottlux.run import export_provenance as prov
+        sources, usage, index = [], [], {}
+        for clip in self.spec.clips:
+            rec = self.recs.get(clip.source)
+            raw = str(getattr(rec, "source_path", "") or "")
+            path = os.path.abspath(raw) if raw else ""
+            key = os.path.normcase(path) if path else (id(rec) if rec is not None
+                                                       else clip.source)
+            if key not in index:
+                index[key] = len(sources) + 1
+                sources.append(prov.source_facts(path, rec=rec) if (path or rec is not None)
+                               else prov.source_facts(clip.source))
+            usage.append(prov.cell_usage(clip, index[key], name=clip.source))
+        return sources, usage
+
+    def _export_texts(self):
+        """The composition's text items, described for the provenance document."""
+        return [{"text": t.text, "kind": t.kind, "anchor": t.anchor,
+                 "span_s": None if t.span is None else [round(float(v), 3) for v in t.span],
+                 "font_size_px": int(t.font_size_px)} for t in self.spec.texts]
+
+    def _export_settings(self, **extra):
+        """The full parameter list the provenance document prints."""
+        settings = {"Canvas": f"{self.spec.width} × {self.spec.height} px",
+                    "Background": tuple(int(v) for v in self.spec.background),
+                    "Cells": len(self.spec.clips),
+                    "Text items": len(self.spec.texts),
+                    "Canvas duration": f"{engine.canvas_duration(self.spec, self.recs):.3f} s"}
+        settings.update({k: v for k, v in extra.items() if v is not None})
+        return settings
+
+    def _write_provenance(self, folder, kind, artifact, settings, spec=None, steps=(),
+                          warnings=()):
+        """Write the folder's README.md + provenance.json for one finished export."""
+        from gottlux.run import export_provenance as prov
+        sources, usage = self._export_sources()
+        return prov.write_provenance(
+            folder, kind, artifact, sources, settings,
+            extra={"usage": usage, "texts": self._export_texts(),
+                   "warnings": list(warnings),
+                   "reproduce": {"spec": spec, "steps": list(steps)}})
+
     # ================================================================== exports
     def _export_video(self):
         if not (self.spec.clips or self.spec.texts):
@@ -1014,18 +1071,41 @@ class CanvasComposerWindow(QtWidgets.QMainWindow):
             self, "Export composition video", "canvas.mp4", "MP4 video (*.mp4)")
         if not out:
             return
+        from gottlux.run import export_provenance as prov
+        folder = prov.export_folder(out)
+        target = prov.artifact_path(folder, out)
         res = with_progress(self, "Exporting canvas video",
-                            lambda cb: engine.export_video(self.spec, self.recs, out,
+                            lambda cb: engine.export_video(self.spec, self.recs, target,
                                                            fps=30.0, progress=cb),
                             label="Rendering frames…")
-        if res:
-            from gottlux.io.paths import open_in_file_browser
-            open_in_file_browser(os.path.dirname(os.path.abspath(res)))
-            QtWidgets.QMessageBox.information(self, "Export video", f"Wrote {res}")
-        else:
+        if not res:
+            prov.discard_folder(folder)
             QtWidgets.QMessageBox.warning(
                 self, "Export video",
                 "Encoding unavailable — install imageio-ffmpeg for MP4 export.")
+            return
+        spec = os.path.splitext(os.path.basename(target))[0] + engine.SPEC_SUFFIX
+        engine.save_spec(self.spec, os.path.join(folder, spec))
+        self._write_provenance(
+            folder, "Canvas video (MP4)",
+            prov.artifact_facts(res["path"], frames=res["frames"], fps=res["fps"],
+                                duration_s=res["duration_s"], width=res["width"],
+                                height=res["height"], canvas=res["canvas"],
+                                codec=res["codec"]),
+            self._export_settings(**{"Frame rate": f"{res['fps']:g} fps",
+                                     "Codec": res["codec"]}),
+            spec=spec,
+            steps=[f"Load `{spec}` with 'Load composition…' in the Canvas composer and "
+                   "use 'Export video…' — the spec carries every cell, clock and look.",
+                   "The sources resolve by the absolute paths listed above; move the "
+                   "recordings and the spec needs its paths updated first."])
+        from gottlux.io.paths import open_in_file_browser
+        open_in_file_browser(folder)
+        QtWidgets.QMessageBox.information(
+            self, "Export video",
+            f"Wrote {os.path.basename(target)} ({res['frames']} frames, "
+            f"{res['duration_s']:.2f} s) →\n{folder}\n\n"
+            f"The folder holds the video, {spec}, README.md and provenance.json.")
 
     def _export_raw(self):
         if not self.spec.clips:
@@ -1038,21 +1118,41 @@ class CanvasComposerWindow(QtWidgets.QMainWindow):
             return
         if not out.lower().endswith(".raw"):
             out += ".raw"
+        from gottlux.run import export_provenance as prov
+        folder = prov.export_folder(out)
+        target = prov.artifact_path(folder, out)
         try:
             res = with_progress(self, "Exporting composited .raw",
-                                lambda cb: engine.export_raw(self.spec, self.recs, out,
+                                lambda cb: engine.export_raw(self.spec, self.recs, target,
                                                              progress=cb),
                                 label="Re-encoding events…")
         except Exception as e:
+            prov.discard_folder(folder)
             QtWidgets.QMessageBox.critical(self, "Export .raw", str(e))
             return
+        # export_raw wrote the composition beside the .raw — inside the folder, and the
+        # only spec this export carries.
+        sidecar = os.path.basename(res["sidecar"])
+        self._write_provenance(
+            folder, "Canvas .raw (composited events)",
+            prov.artifact_facts(res["path"], events=res["n_events"],
+                                duration_s=res["duration_s"], width=res["width"],
+                                height=res["height"],
+                                canvas=(res["width"], res["height"])),
+            self._export_settings(**{"Event export": "cells re-encoded into the canvas "
+                                                     "geometry as one EVT2.1 stream"}),
+            spec=sidecar,
+            steps=[f"Load `{sidecar}` with 'Load composition…' to re-render the styled "
+                   "composition, or to re-encode the events with 'Export .raw…'."],
+            warnings=res.get("warnings") or [])
         from gottlux.io.paths import open_in_file_browser
-        open_in_file_browser(os.path.dirname(os.path.abspath(out)))
+        open_in_file_browser(folder)
         note = ("\n".join(res["warnings"]) + "\n") if res.get("warnings") else ""
         QtWidgets.QMessageBox.information(
             self, "Export .raw",
             f"Wrote {res['n_events']:,} events ({res['width']}×{res['height']}, "
             f"{res['duration_s']:.2f} s) →\n{res['path']}\n\n"
-            f"{note}Spec sidecar: {os.path.basename(res['sidecar'])}\n"
+            f"{note}Spec sidecar: {sidecar}\n"
             "Note: the .raw carries events only — per-clip colormaps/tone-maps apply to "
-            "rendering, not to the event stream.")
+            "rendering, not to the event stream.\n\n"
+            f"Export folder (artifact + README.md + provenance.json):\n{folder}")

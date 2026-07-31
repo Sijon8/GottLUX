@@ -856,14 +856,21 @@ def render_program_frame(program: Program, t_program: float) -> np.ndarray:
     return frame
 
 
-def program_spec(program: Program) -> tuple:
-    """Flatten *program* into one ``(spec, recs)`` pair for the event (``.raw``) export.
+def program_spec(program: Program, overlays: bool = False, texts: bool = False) -> tuple:
+    """Flatten *program* into one ``(spec, recs)`` pair.
 
     Every segment's **own** cells are re-based onto the program clock
     (``t_offset_s += t0_s``) and their source keys namespaced per segment, so the whole
-    sequence becomes a single composition :func:`export_raw` can re-encode. Overlay-lane
-    cells are left out — the sequential lane is what an event export carries — and text
-    items are dropped, exactly as :func:`export_raw` drops them anyway.
+    sequence becomes a single composition :func:`export_raw` can re-encode. The defaults
+    are the event export's view of the program: overlay-lane cells are left out (the
+    sequential lane is what an event export carries) and text items are dropped, exactly
+    as :func:`export_raw` drops them anyway.
+
+    *overlays* appends the overlay lane's cells (already on the program clock) and *texts*
+    the text items — every segment's own texts re-based onto the program clock, then the
+    program-wide running titles. With both on the result is a single composition that
+    **renders** the whole program, which is what an export folder saves as its
+    ``.gottlux-canvas.json`` so a video export stays re-renderable.
     """
     spec = CanvasSpec(width=int(program.width), height=int(program.height))
     recs = {}
@@ -875,16 +882,52 @@ def program_spec(program: Program) -> tuple:
             copy.loop = False                      # a program slot plays exactly once
             spec.clips.append(copy)
             recs[copy.source] = seg.recs[clip.source]
+        if texts:
+            for txt in seg.spec.texts:
+                copy = CanvasText.from_dict(txt.to_dict())
+                span = txt.span or (0.0, seg.duration_s)
+                copy.span = (seg.t0_s + float(span[0]), seg.t0_s + float(span[1]))
+                spec.texts.append(copy)
+    if overlays:
+        for clip in program.overlay_clips:
+            copy = CanvasClip.from_dict(clip.to_dict())
+            spec.clips.append(copy)
+            recs[copy.source] = program.overlay_recs[clip.source]
+    if texts:
+        spec.texts += [CanvasText.from_dict(t.to_dict()) for t in program.overlays]
     return spec, recs
 
 
+def _video_result(writer, fps, duration_s, canvas_wh, warnings) -> dict | None:
+    """Close *writer* and describe what it wrote — the video exports' common return shape.
+
+    ``None`` when nothing was written (a missing muxer, or an encode that produced no
+    frame), so ``if not result:`` still means "the export did not happen"; otherwise a
+    facts dict complete enough for :mod:`gottlux.run.export_provenance` to document the
+    file without re-opening it: ``path``, ``frames`` actually encoded, ``fps``,
+    ``duration_s``, the encoded ``width``/``height`` (even-rounded for H.264, so it can
+    differ by a pixel from the canvas), the ``canvas`` the frames were rendered at, and
+    any ``warnings``.
+    """
+    size = writer.size
+    path = writer.close()
+    if not path:
+        return None
+    W, H = (int(v) for v in canvas_wh)
+    return {"path": path, "frames": int(writer.frames), "fps": float(fps),
+            "duration_s": float(duration_s), "width": int(size[0]) if size else W,
+            "height": int(size[1]) if size else H, "canvas": (W, H),
+            "codec": "H.264 (libx264) in MP4", "warnings": list(warnings)}
+
+
 def export_program_video(program: Program, out_mp4: str, fps: float = 30.0,
-                         duration_s: float | None = None, progress=None):
+                         duration_s: float | None = None, progress=None) -> dict | None:
     """Render the whole program to an MP4 at *fps* — segments, overlays, and titles.
 
     Frame *i* samples program time ``i / fps`` through :func:`render_program_frame`, so
     the file is frame-for-frame what the Timeline's preview shows. Fails soft like
-    :func:`export_video`: returns the written path, or ``None`` when the muxer is missing.
+    :func:`export_video`: returns the :func:`_video_result` facts dict, or ``None`` when
+    the muxer is missing.
     """
     from gottlux.viz.video import VideoWriter
     duration = program.duration_s if duration_s is None else float(duration_s)
@@ -900,21 +943,22 @@ def export_program_video(program: Program, out_mp4: str, fps: float = 30.0,
                 progress((i + 1) / n)
             except Exception:
                 pass
-    return w.close()
+    return _video_result(w, fps, duration, (program.width, program.height), [])
 
 
 # ====================================================================================
 # Exports — MP4 (rendered) and .raw (re-encoded events)
 # ====================================================================================
 def export_video(spec: CanvasSpec, recs, out_mp4: str, fps: float = 30.0,
-                 duration_s: float | None = None, progress=None):
+                 duration_s: float | None = None, progress=None) -> dict | None:
     """Render the composition to an MP4 at *fps* over ``[0, duration_s]``.
 
     *duration_s* defaults to :func:`canvas_duration` extended over the text spans
     (:func:`texts_extent_s`), so a title slide past the last clip still plays. Frame *i*
     samples canvas time ``i / fps``. Uses :class:`gottlux.viz.video.VideoWriter`
-    (imageio-ffmpeg) and fails soft: returns the written path, or ``None`` when the
-    muxer is unavailable.
+    (imageio-ffmpeg) and fails soft: returns the :func:`_video_result` facts dict (the
+    written ``path``, the frame count, the fps, the duration, the encoded geometry), or
+    ``None`` when the muxer is unavailable.
     """
     from gottlux.viz.video import VideoWriter
     duration = (max(canvas_duration(spec, recs), texts_extent_s(spec))
@@ -931,7 +975,7 @@ def export_video(spec: CanvasSpec, recs, out_mp4: str, fps: float = 30.0,
                 progress((i + 1) / n)
             except Exception:
                 pass
-    return w.close()
+    return _video_result(w, fps, duration, (spec.width, spec.height), [])
 
 
 def export_raw(spec: CanvasSpec, recs, out_raw: str, duration_s: float | None = None,

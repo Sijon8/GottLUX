@@ -8,6 +8,10 @@ dist/
 .pytest_cache/
 .ipynb_checkpoints/
 
+# offline dependency bundle (hundreds of MB of third-party wheels, platform
+# specific; rebuild with `python scripts/fetch_wheels.py` — see docs/OFFLINE_INSTALL.md)
+vendor/
+
 # gottlux outputs & caches (regenerable, often large)
 _gottlux_cache/
 gottlux_runs/

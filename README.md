@@ -196,7 +196,7 @@ slow-motion crop of the same moment. A composition is a small JSON spec
 (`.gottlux-canvas.json`) — save it, reload it, re-render it — and exports two ways:
 rendered frame-by-frame to **MP4**, or re-encoded as **events** into one composited
 EVT2.1 **`.raw`** (geometry and clock mapping applied to the merged stream; the spec
-rides along as a sidecar so the styled view stays reproducible).
+rides along inside the export folder so the styled view stays reproducible).
 
 The **Timeline** tab is the sequential side of the same engine, and shares its cell
 machinery outright. It compiles into a *program*: every sequential item is a canvas — a
@@ -209,6 +209,19 @@ the same draggable/resizable cells as the composer window, so no pop-out is need
 `Export .raw…` stays events-only (a plain sequence stitches exactly as before — trim,
 crop, gap, one monotonic clock — while a timeline holding mosaics composites into the
 canvas geometry, and titles are noted rather than written).
+
+**Every export is a folder, not a loose file.** Video and event exports alike land in
+`<stem>_export_<UTC-stamp>/`, holding the artifact, a human-readable `README.md`, a
+machine-readable `provenance.json`, and — where the export path has one — the
+`.gottlux-canvas.json` spec that re-renders it. The README names every source recording
+the composition drew on, one table row per clip: file name, absolute directory, size,
+SHA-256, container format, sensor resolution, event count and duration. It then states how
+each source was used (in/out trim, source ROI crop, destination rect on the canvas, time
+offset and scale, accumulation, mode, colormap, tone-map, loop), the full export settings,
+any titles, how to reproduce the result, and the role of every file in the folder. A
+composition assembled from fifteen clips collected on different days therefore stays
+traceable to all fifteen files months later. The same convention covers the Timeline tab,
+the Canvas composer, and view captures, and the completion dialog reports the folder.
 
 ## Headless analysis & editing
 

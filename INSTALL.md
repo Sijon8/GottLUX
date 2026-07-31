@@ -11,6 +11,9 @@ dependency — there is no vendor SDK to install: GottLUX ships its own pure-Num
 > The browser demo at <https://sijon8.github.io/GottLUX/> plays real sample clips
 > with zero setup — a way to preview the suite before installing anything.
 
+> **No internet on the target machine?** GottLUX installs fully offline from a
+> pre-downloaded wheel bundle — see [`docs/OFFLINE_INSTALL.md`](docs/OFFLINE_INSTALL.md).
+
 ---
 
 ## 1. Quick install (both platforms)

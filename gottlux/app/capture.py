@@ -4,8 +4,14 @@ capture.py — record what any view shows to a video / poster, with a context in
 A generic screen capture: it drives the shared clock across a time range, **grabs the active
 view's pixels** at each step (works for the pyqtgraph 2-D views and the OpenGL 3-D view),
 optionally crops to a **drag-selected region**, wraps each frame in a **context banner**
-(recording, view, time, settings — the "infographic"), and muxes to MP4. It also drops a
-**poster** PNG and a **manifest** so the clip self-documents the data behind it.
+(recording, view, time, settings — the "infographic"), and muxes to MP4.
+
+The clip lands in the suite's standard **provenance folder**
+(:mod:`gottlux.run.export_provenance`): the MP4, the optional **poster** PNG, a README
+naming the source recording with its directory and SHA-256, and ``provenance.json``. The
+capture's former ``*_manifest.json`` is *merged into* that ``provenance.json`` — its
+title/view/window/fps/region/context fields are the record's settings — so one convention
+covers every export in the suite instead of two.
 
 The pixel grab and the dialog live here (they need Qt); the frame compositing/encoding is in
 :mod:`gottlux.viz.video`.
@@ -143,7 +149,10 @@ class ScreenCaptureDialog(QtWidgets.QDialog):
             self.res.addItems(["On-screen (grab)"])
             self.res.setToolTip("This view captures the on-screen widget pixels.")
         self.banner = QtWidgets.QCheckBox("Context banner (infographic overlay)"); self.banner.setChecked(True)
-        self.poster = QtWidgets.QCheckBox("Also save poster PNG + manifest"); self.poster.setChecked(True)
+        self.poster = QtWidgets.QCheckBox("Also save a poster PNG"); self.poster.setChecked(True)
+        self.poster.setToolTip("Save a context poster (the middle frame plus the settings "
+                               "panel) beside the clip. The README and provenance.json are "
+                               "written either way.")
         self.title = QtWidgets.QLineEdit(f"{getattr(rec, 'name', 'capture')} — {ctx.get('view','view')}")
         self.note = QtWidgets.QLineEdit(); self.note.setPlaceholderText("note (optional) — into the manifest")
         self.region_btn = QtWidgets.QPushButton("Select region on view…")
@@ -320,9 +329,13 @@ class ScreenCaptureDialog(QtWidgets.QDialog):
                 prog.setValue(i + 1)
                 yield rgb
 
-        path = _video.write_video(out, frames(), fps=out_fps)
+        from gottlux.run import export_provenance as eprov
+        folder = eprov.export_folder(out)
+        target = eprov.artifact_path(folder, out)
+        path = _video.write_video(target, frames(), fps=out_fps)
         prog.close()
         if not path:
+            eprov.discard_folder(folder)
             if not _video.ffmpeg_available():
                 msg = ("Video export needs the FFMPEG muxer, which isn't available.\n\n"
                        "Install it with:\n    pip install imageio-ffmpeg")
@@ -334,31 +347,70 @@ class ScreenCaptureDialog(QtWidgets.QDialog):
             return
         written = [path]
         if self.poster.isChecked():
-            written += self._save_poster_and_manifest(out, mid_frame[0], fields, (t0, t1, out_fps))
+            written += self._save_poster(folder, target, mid_frame[0], fields)
+        self._write_provenance(folder, target, fields, (t0, t1), n, out_fps, slow,
+                               use_render, size)
         from gottlux.io.paths import open_in_file_browser
-        open_in_file_browser(os.path.dirname(os.path.abspath(out)))
+        open_in_file_browser(folder)
         QtWidgets.QMessageBox.information(
             self, "Capture",
-            f"Saved ({n} frames · {n / out_fps:.1f}s @ {out_fps:g} fps · {self._speed_text(slow)}):\n"
-            + "\n".join(os.path.basename(p) for p in written))
+            f"Saved ({n} frames · {n / out_fps:.1f}s @ {out_fps:g} fps · {self._speed_text(slow)}) "
+            f"→\n{folder}\n\n"
+            + "\n".join(os.path.basename(p) for p in written)
+            + "\nREADME.md\nprovenance.json")
         self.accept()
 
-    def _save_poster_and_manifest(self, out, frame, fields, rng):
-        from gottlux.io import export
-        base = os.path.splitext(out)[0]
-        written = []
+    def _save_poster(self, folder, target, frame, fields):
+        """Write the context poster (middle frame + settings panel) into the folder."""
+        out_png = os.path.join(folder, os.path.splitext(os.path.basename(target))[0]
+                               + "_poster.png")
         try:
             if frame is None:
                 frame = grab_widget(self.ctx.get("target"))
-            poster = _video.context_poster(frame, self.title.text(), fields)
             from PIL import Image
-            Image.fromarray(poster).save(base + "_poster.png")
-            written.append(base + "_poster.png")
+            Image.fromarray(_video.context_poster(frame, self.title.text(), fields)).save(out_png)
+            return [out_png]
         except Exception as e:
             print(f"[capture] poster failed: {e}")
-        written += export.save_json(
-            {"title": self.title.text(), "view": self.ctx.get("view"),
-             "window_s": [rng[0], rng[1]], "fps": rng[2], "region": self.region,
-             "context": fields, "video": os.path.basename(out)},
-            base + "_manifest.json")
-        return written
+            return []
+
+    def _write_provenance(self, folder, target, fields, window, n, out_fps, slow,
+                          use_render, size):
+        """Write the folder's README.md + provenance.json.
+
+        This is where the capture's old ``*_manifest.json`` went: its title, view, window,
+        fps, region and context fields are the provenance record's settings, so a capture
+        self-documents through the same one convention every other export uses.
+        """
+        from gottlux.run import export_provenance as eprov
+        rec = self.ctx.get("rec")
+        source = eprov.source_facts(getattr(rec, "source_path", "") or "", rec=rec)
+        settings = {
+            "Title": self.title.text(),
+            "View": self.ctx.get("view", ""),
+            "Capture path": (f"faithful re-render at {size[0]} × {size[1]} px" if use_render
+                             else "on-screen pixel grab"),
+            "Region crop (view px)": self.region or "none — the whole view",
+            "Equivalent (slow-motion) FPS": f"{self.fps.value():g} fps",
+            "File cadence": f"{out_fps:g} fps ({self._speed_text(slow)})",
+            "Accumulation (exposure)": f"{self.accum.value() * 1e3:g} ms",
+            "Context banner": "on" if self.banner.isChecked() else "off",
+        }
+        settings.update({f"Context — {k}": v for k, v in fields.items()})
+        usage = [{"source": 1, "name": str(self.ctx.get("view", "view")),
+                  "trim_in_s": float(window[0]), "trim_out_s": float(window[1]),
+                  "accumulation_s": float(self.accum.value()),
+                  "note": "the in/out points are absolute recording times, and each frame "
+                          "integrates the accumulation window above"}]
+        return eprov.write_provenance(
+            folder, "View capture (MP4)",
+            eprov.artifact_facts(target, frames=int(n), fps=float(out_fps),
+                                 duration_s=n / float(out_fps),
+                                 codec="H.264 (libx264) in MP4"),
+            [source], settings,
+            extra={"usage": usage,
+                   "reproduce": {"steps": [
+                       "Load the source recording listed above and open the view named in "
+                       "the settings table.",
+                       "Apply the context settings, then use 'Capture view…' with the same "
+                       "In/Out, FPS, accumulation and resolution."]}})

@@ -1,6 +1,8 @@
 """
 Smoke tests for the generic screen/video capture (gottlux.app.capture): the pixel grab and the
-capture dialog construct and wire up correctly (offscreen). The actual muxing/run path is
+capture dialog construct and wire up correctly (offscreen), and a real run lands its clip in
+the suite's standard provenance folder — the MP4, the poster, and the README + provenance.json
+that replaced the capture's old standalone ``*_manifest.json``. The muxing itself is
 exercised by gottlux.viz.video tests.
 """
 import os
@@ -86,3 +88,56 @@ def test_capture_dialog_constructs_and_wires(app):
     assert dlg.region == (5, 6, 20, 18)
     dlg.trim.set_range(0.25, 0.75); dlg._trim_to_spins(0.25, 0.75)
     assert dlg.out_s.value() > dlg.in_s.value()
+
+
+def test_capture_run_writes_one_provenance_folder(app, tmp_path, monkeypatch, exported):
+    """A capture writes a folder, not loose files: the MP4, the poster PNG, and the two
+    provenance documents. The old ``*_manifest.json`` is gone — its title, view, window,
+    fps and context fields are now the record's settings."""
+    from PySide6 import QtWidgets
+    from gottlux.viz import video
+    if not video.ffmpeg_available():
+        pytest.skip("imageio-ffmpeg not available")
+    import gottlux.io.paths as paths
+    from gottlux.app.capture import ScreenCaptureDialog
+
+    rec, _ = synthetic_scene(duration_s=0.5, targets=[FlutterTarget()], seed=4)
+    render = lambda t, dt, size: np.full((size[1], size[0], 3), 40, np.uint8)
+    ctx = dict(rec=rec, target=QtWidgets.QLabel("v"), set_cursor=lambda t: None,
+               view="Live viewer", t0=rec.t_start_s, t1=rec.t_stop_s, accum=0.02,
+               render=render, sensor_wh=(64, 64), fields={"Sensor": "GenX320"})
+    dlg = ScreenCaptureDialog(None, ctx)
+    dlg.res.setCurrentText("Faithful · native")
+    dlg.title.setText("Bench run")
+    dlg.note.setText("third pass")
+    dlg.fps.setValue(20.0)
+    dlg._trim_to_spins(rec.t_start_s, rec.t_start_s + 0.2)
+    out = str(tmp_path / "capture.mp4")
+    dlg.out_edit.setText(out)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information",
+                        staticmethod(lambda *a, **k: None))
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: pytest.fail(f"capture failed: {a}")))
+    monkeypatch.setattr(paths, "open_in_file_browser", lambda *a, **k: None)
+    dlg._run()
+
+    folder = exported(out)
+    assert os.path.getsize(folder.artifact) > 0
+    assert "capture_poster.png" in folder.names
+    assert not any(n.endswith("_manifest.json") for n in folder.names)
+    assert folder.record["kind"] == "View capture (MP4)"
+
+    settings = folder.record["settings"]
+    assert settings["Title"] == "Bench run" and settings["View"] == "Live viewer"
+    assert settings["Context — Note"] == "third pass"
+    assert settings["Context — Sensor"] == "GenX320"
+    assert "faithful re-render" in settings["Capture path"]
+    # the source recording is documented, and the window it was captured over
+    assert len(folder.sources) == 1 and folder.sources[0]["events"] == rec.n
+    row = folder.usage[0]
+    assert row["trim_in_s"] == pytest.approx(dlg.in_s.value())
+    assert row["trim_out_s"] == pytest.approx(dlg.out_s.value())
+    assert row["trim_out_s"] > row["trim_in_s"]
+    assert row["accumulation_s"] == pytest.approx(dlg.accum.value())
+    # the poster has a role in the files table, like every other file in the folder
+    assert {f["name"] for f in folder.record["files"]} == set(folder.names)
