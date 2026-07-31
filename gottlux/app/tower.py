@@ -352,8 +352,7 @@ class EventRateTower(QtWidgets.QWidget):
             self._static_vmax = vmax
         zh = self.zscale.value()
         bright = self.bright.value() / 100.0
-        import matplotlib.cm as cm
-        cmap = cm.get_cmap(self.cmap.currentText())
+        cmap = tonemap.colormap(self.cmap.currentText())
         if self.style.currentText() == "bars":
             self._render_bars(disp, cell, zh, cmap, bright)
         else:

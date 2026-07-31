@@ -50,6 +50,30 @@ def test_compress_signed_symmetric():
     assert abs(disp[0, 0] + disp[0, 2]) < 1e-6          # symmetric about zero
 
 
+def test_colormap_lookup_uses_the_supported_matplotlib_api():
+    """Colormaps resolve through ``matplotlib.colormaps``. The old ``matplotlib.cm.get_cmap``
+    was removed in matplotlib 3.11, and several of these lookups run inside Qt paint handlers
+    where an escaping exception aborts the whole process rather than failing one call — so an
+    unrecognised name must degrade to the default instead of raising."""
+    import matplotlib
+    assert tonemap.colormap("inferno").name == "inferno"
+    assert tonemap.colormap("no-such-colormap").name == "viridis"      # unknown → default
+    assert tonemap.colormap(None).name == "viridis"                    # unset → default
+    assert tonemap.colormap("no-such-colormap", fallback="magma").name == "magma"
+    assert matplotlib.colormaps["inferno"](0.5)[:3] == tonemap.colormap("inferno")(0.5)[:3]
+
+
+def test_render_rgb_colourizes_both_magnitude_and_polarity_frames():
+    """The public frame → RGB helper maps through a colormap for plain and diverging frames."""
+    from gottlux.core.accumulate import render_rgb
+    frame = np.arange(24, dtype=np.float32).reshape(4, 6)
+    rgb = render_rgb(frame, cmap="inferno")
+    assert rgb.shape == (4, 6, 3) and rgb.dtype == np.uint8
+    assert rgb[0, 0].tolist() != rgb[-1, -1].tolist()         # the ramp really becomes colour
+    pol = render_rgb(frame - 12.0, polarity=True)             # diverging map centred on zero
+    assert pol.shape == (4, 6, 3) and pol[0, 0].tolist() != pol[-1, -1].tolist()
+
+
 # ----------------------------------------------------------------- NUFFT / whitening
 def test_nufft_recovers_frequency():
     rec = _periodic_pixel(173.0, duration_s=1.0, n_per_burst=16)

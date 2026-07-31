@@ -19,8 +19,10 @@ Both :func:`compress` (non-negative magnitude frames) and :func:`compress_signed
 range plus the reference scale they used, so a caller can freeze that scale for
 ``static`` mode.
 
-All transforms are pure NumPy and cheap (one pass over the frame); nothing here imports
-Qt or matplotlib.
+The tone curves themselves are pure NumPy and cheap (one pass over the frame) and nothing
+here imports Qt. The one matplotlib touch-point is :func:`colormap`, which every colormap
+lookup in gottlux goes through; it imports matplotlib lazily, so importing this module
+stays free.
 """
 from __future__ import annotations
 
@@ -43,6 +45,25 @@ SCALE_HELP = {
     "dynamic": "Recompute the white-point every frame (best instantaneous contrast).",
     "static": "Hold a fixed white-point (frames stay comparable; a flash won't rescale the view).",
 }
+
+
+def colormap(name, fallback: str = "viridis"):
+    """The named matplotlib colormap — the single place gottlux resolves one.
+
+    ``matplotlib.cm.get_cmap`` was removed in matplotlib 3.11, so the lookup goes through
+    the ``matplotlib.colormaps`` registry (present since 3.5, and the only spelling that
+    works on every version this project supports).
+
+    A name matplotlib does not know — a stale saved preference, or a pyqtgraph-only name —
+    falls back to *fallback* rather than raising. That matters because several of these
+    lookups happen inside a Qt ``paintEvent``, where an escaping exception does not fail
+    politely: PySide6 aborts the process.
+    """
+    import matplotlib
+    try:
+        return matplotlib.colormaps[name]
+    except (KeyError, TypeError):
+        return matplotlib.colormaps[fallback]
 
 
 def reference_white(frame, clip_pct: float = 99.5) -> float:

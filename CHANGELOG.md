@@ -44,6 +44,16 @@ All notable changes to GottLUX are documented here. The project follows
 
 ### Fixed
 
+- **Opening the Event-rate tower killed the application on matplotlib 3.11.** Colormaps
+  were looked up through `matplotlib.cm.get_cmap`, which that release removed. The tower's
+  colour key resolves its colormap from inside a Qt `paintEvent`, and an exception escaping
+  a paint handler does not fail politely — PySide6 aborts the interpreter — so the app died
+  with an access violation the moment the tab (or the right-hand pane of the split view,
+  which opens on it) became visible. The Space-time 3D colouring and `core.accumulate.
+  render_rgb` hit the same removed API. All colormap lookups now go through one place,
+  `core.tonemap.colormap()`, which uses the `matplotlib.colormaps` registry supported across
+  every matplotlib this project accepts, and falls back to the default for a name the
+  installed matplotlib does not know rather than raising inside a paint handler.
 - Timeline and Canvas exports documented every in-memory recording (one with no file on
   disk) as a single shared source pointing at the working directory, because an empty
   source path was passed through `os.path.abspath()`. Such recordings are now keyed by

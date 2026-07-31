@@ -887,8 +887,8 @@ class SpaceTimeView(QtWidgets.QWidget):
                                            vmax=self._static_vmax if static else None)
         if static and self._static_vmax is None:
             self._static_vmax = vmax_used                    # freeze the white-point on first static frame
-        import matplotlib.cm as cm
-        c = cm.get_cmap(self.cmap.currentText())(np.asarray(disp, np.float64)).astype(np.float32)
+        cmap = tonemap.colormap(self.cmap.currentText())
+        c = cmap(np.asarray(disp, np.float64)).astype(np.float32)
         c[:, 3] = 0.82
         return c
 

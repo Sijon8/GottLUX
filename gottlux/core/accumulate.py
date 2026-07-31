@@ -127,13 +127,14 @@ def render_rgb(frame: np.ndarray, cmap: str = "inferno",
     For ``polarity`` frames pass ``polarity=True`` to use a diverging map centered at 0.
     Imports matplotlib lazily (kept out of the hot path).
     """
-    import matplotlib.cm as cm
     from matplotlib.colors import Normalize, TwoSlopeNorm
+
+    from gottlux.core.tonemap import colormap
     f = frame.astype(np.float32)
     if polarity:
         a = float(np.abs(f).max()) or 1.0
         norm = TwoSlopeNorm(vmin=-a, vcenter=0.0, vmax=a)
-        mapper = cm.get_cmap("coolwarm")
+        mapper = colormap("coolwarm")
     else:
         lo, hi = float(f.min()), float(np.percentile(f, 99.5)) if f.max() > 0 else (0.0, 1.0)
         if gamma != 1.0 and hi > lo:
@@ -141,6 +142,6 @@ def render_rgb(frame: np.ndarray, cmap: str = "inferno",
             norm = Normalize(0, 1)
         else:
             norm = Normalize(lo, hi if hi > lo else lo + 1)
-        mapper = cm.get_cmap(cmap)
+        mapper = colormap(cmap)
     rgba = mapper(norm(f))
     return (rgba[..., :3] * 255).astype(np.uint8)

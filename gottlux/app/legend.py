@@ -44,8 +44,8 @@ def make_colorbar(label="events / pixel", cmap="inferno", levels=(0, 1)):
 
 def _qcolor_stops(cmap_name, n=16):
     """Sample a matplotlib colormap into (pos, QColor) gradient stops."""
-    import matplotlib.cm as cm
-    m = cm.get_cmap(cmap_name)
+    from gottlux.core import tonemap
+    m = tonemap.colormap(cmap_name)
     stops = []
     for i in range(n):
         f = i / (n - 1)

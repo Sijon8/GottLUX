@@ -225,6 +225,26 @@ def test_split_view_record_targets_focused_pane(app):
     assert vw is not None and hasattr(vw, "grab")
 
 
+def test_shown_tabs_paint_their_colour_keys(app):
+    """Every tab must survive being *shown* — the paint, not just the construction.
+
+    The Event-rate tower arms its colour key as a gradient at build time, and that legend
+    resolves a matplotlib colormap from inside ``paintEvent``. An exception escaping a Qt paint
+    handler does not fail one call politely: PySide6 aborts the interpreter. So a removed
+    matplotlib API surfaced as a hard process crash the moment the tab became visible, in the
+    app and across the whole headless suite alike."""
+    from gottlux.app.legend import ColorKey
+    from gottlux.app.main import MainWindow
+    names = list(MainWindow._TAB_NAMES)
+    win = MainWindow(); win.show()
+    for name in ("Event-rate tower", "Space-time 3D"):
+        win.tabs.setCurrentIndex(names.index(name))
+        QtWidgets.QApplication.processEvents()      # the paint that used to abort the process
+    key = win.tower.key
+    assert isinstance(key, ColorKey)
+    assert not key.grab().isNull()                  # the gradient legend renders its ramp
+
+
 def test_spacetime_frame_and_markers(app):
     """The space-time view draws a thin sensor-plane frame + axis markers (replacing the old filled
     plane); both toggle off, and the bezel width is adjustable."""
