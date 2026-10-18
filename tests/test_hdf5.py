@@ -9,6 +9,9 @@ Covered here:
   ``gottlux.load``, and provenance (geometry attrs + the ``gottlux`` attrs group) is stored;
 * a windowed/ROI export honours its bounds with ``cut_clip`` semantics (re-zeroed times);
 * the plain parallel ``x/y/p/t`` layouts (root-level and inside ``events/``) read too;
+* the MATLAB 4xN ``x/y/p/t`` matrix (MATLAB exports — any dataset name,
+  either orientation, permuted rows, ``±1`` polarity) reads and opens through the loader,
+  and a ``CD`` group left without its ``events`` dataset is diagnosed as such;
 * an ``.h5`` builds the same decode-once bin cache a ``.raw`` does (``fmt='hdf5'``, cache
   beside the file, a distinct stem from a sibling ``.raw``) and re-opens instantly;
 * the CLI ``--to-hdf5`` action via ``main()`` (default OUT, explicit OUT + window flags),
@@ -146,6 +149,80 @@ def test_plain_xypt_layout_reads(tmp_path, where):
     rec = eb.load(h5, progress=lambda f_: None)
     assert rec.n == n and rec.fmt == "hdf5"
     assert np.array_equal(np.asarray(rec.t), t - t[0])
+
+
+# --------------------------------------------------------------------- MATLAB 4xN matrix
+def _matlab_matrix_h5(tmp_path, name="events", transposed=False, order="xypt",
+                      n=5_000, w=1280, h=720, seed=7):
+    """An ``.h5`` in the shape a MATLAB 4xN exporter writes: one plain float64
+    dataset of four parallel rows, no attrs, polarity as +/-1. Returns (path, x, y, p, t)
+    with p already 0/1 and t already zero-based."""
+    rng = np.random.default_rng(seed)
+    x = rng.integers(0, w, n).astype(np.uint16)
+    y = rng.integers(0, h, n).astype(np.uint16)
+    p = rng.integers(0, 2, n).astype(np.uint8)
+    t = np.sort(rng.integers(6_000, 800_000, n)).astype(np.int64)
+    cols = {"x": x, "y": y, "p": np.where(p == 1, 1.0, -1.0), "t": t}
+    mat = np.asarray([cols[k] for k in order], dtype=np.float64)   # (4, N), x/y/p/t order
+    path = str(tmp_path / "matlab.h5")
+    with h5py.File(path, "w") as f:
+        f.create_dataset(name, data=mat.T if transposed else mat)
+    return path, x, y, p, t - t[0]
+
+
+@pytest.mark.parametrize("name", ["events", "data", "some_other_name"])
+def test_matlab_4xn_matrix_layout_reads(tmp_path, name):
+    """A MATLAB 4xN export opens: rows are x, y, p, t; the dataset name carries
+    no layout meaning, so an unknown one must work exactly like the documented two."""
+    path, x, y, p, t = _matlab_matrix_h5(tmp_path, name=name)
+    d = h5io.read_events(path)
+    assert d["n"] == len(x) and d["fmt"] == "hdf5"
+    assert np.array_equal(d["x"], x) and np.array_equal(d["y"], y)
+    assert np.array_equal(d["p"], p)                    # +/-1 normalized to 0/1, OFF -> 0
+    assert np.array_equal(d["t"], t)
+
+
+def test_matlab_matrix_transposed_and_permuted_rows(tmp_path):
+    """An (N, 4) orientation, and rows in a non-documented order, are both recovered from
+    the data rather than trusted blindly."""
+    path, x, y, p, t = _matlab_matrix_h5(tmp_path, transposed=True)
+    d = h5io.read_events(path)
+    assert np.array_equal(d["x"], x) and np.array_equal(d["y"], y)
+    assert np.array_equal(d["p"], p) and np.array_equal(d["t"], t)
+
+    path, x, y, p, t = _matlab_matrix_h5(tmp_path, order="xypt")
+    with h5py.File(path, "r+") as f:                    # rewrite the rows as x, y, t, p
+        m = f["events"][:]
+        del f["events"]
+        f.create_dataset("events", data=m[[0, 1, 3, 2]])
+    d = h5io.read_events(path)
+    assert np.array_equal(d["x"], x) and np.array_equal(d["y"], y)
+    assert np.array_equal(d["p"], p) and np.array_equal(d["t"], t)
+
+
+def test_matlab_matrix_opens_through_loader(tmp_path):
+    """...and the whole app path (decode-once cache, geometry inferred from the data when
+    the file declares none) opens it like any other recording."""
+    path, x, y, p, t = _matlab_matrix_h5(tmp_path)
+    rec = eb.load(path, progress=lambda f_: None)
+    assert rec.n == len(x) and rec.fmt == "hdf5"
+    assert np.array_equal(np.asarray(rec.x), x)
+    assert np.array_equal(np.asarray(rec.p), p)
+    assert np.array_equal(np.asarray(rec.t), t)
+    assert (rec.width, rec.height) == (int(x.max()) + 1, int(y.max()) + 1)
+
+
+def test_cd_group_without_events_says_why(tmp_path):
+    """An interrupted conversion — a 'CD' group holding only 'indexes' — is diagnosed as
+    a missing event stream, not as an unknown layout."""
+    path = str(tmp_path / "truncated.h5")
+    with h5py.File(path, "w") as f:
+        f.create_group("CD").create_dataset(
+            "indexes", data=np.zeros(8, dtype=[("id", "<u8"), ("ts", "<i8")]))
+    with pytest.raises(FusionError) as ei:
+        h5io.read_events(path)
+    msg = str(ei.value)
+    assert "'CD' group" in msg and "indexes" in msg and "never stored the event stream" in msg
 
 
 # --------------------------------------------------------------------- decode-once cache

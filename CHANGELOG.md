@@ -7,6 +7,21 @@ All notable changes to GottLUX are documented here. The project follows
 
 ### Added
 
+- **Panorama bounding-box labeling in the EBS viewer.** The annotation row gains a
+  checkable **▣ Label box** button: with it active in the *Panorama* or *Phase-Locked
+  Pano* view, dragging a rectangle over the map records a ground-truth bounding box for
+  the target under the cursor — stored in **world coordinates** (azimuth degrees for the
+  columns, raw sensor rows for the vertical extent) together with the playhead time and
+  the map-window interval that was on screen, so the label is meaningful regardless of
+  how the panorama is later re-rendered. Boxes live in the existing
+  `<file>_annotations.json` sidecar next to the time markers (records with
+  `"kind": "box"`; the loader splits the two on read, so old sidecars keep working),
+  draw as gold outlines on both the live view and video exports, and **× Del box**
+  removes the most recent visible one. The label prompt pre-fills the previous label so
+  tagging the same drone across a whole recording is one drag and one Enter per pass.
+  Purpose: hand-labeled truth data for training/validating moving-target detectors on
+  rotating-sensor recordings.
+
 - **Export provenance folders.** Every video and event export now writes a
   self-documenting **folder** — `<stem>_export_<UTC-stamp>/` beside the chosen save
   location — instead of a loose file: the artifact under its own name, a human-readable

@@ -147,3 +147,41 @@ def test_set_recording_and_export_hooks(app):
     # capture honours an explicit accumulation and a resize
     rgb = v.capture_frame(0.5, dt=0.05, size=(200, 150))
     assert rgb.shape[:2] == (150, 200)
+
+
+def test_panorama_label_boxes_roundtrip(app, tmp_path):
+    """Panorama bbox labels: add via the pano-px path, persist to the sidecar
+    JSON next to the time markers, reload split by kind, draw onto a frame."""
+    from unittest import mock
+
+    from gottlux.app.ebsviewer import EBSViewer
+    v = EBSViewer()
+    v.set_recording(_synth(dur_s=2.0))
+    v._ann_path = str(tmp_path / "clip_annotations.json")
+    v.annotations = [{"t": 0.5, "label": "marker"}]
+    # a rubber-band rectangle arriving in panorama pixels (720 x H image)
+    with mock.patch.object(QtWidgets.QInputDialog, "getText",
+                           return_value=("drone", True)):
+        v._pano_roi_active = True
+        v.set_roi((100, 40, 140, 90))
+    assert len(v.boxes) == 1
+    b = v.boxes[0]
+    assert b["kind"] == "box" and b["label"] == "drone"
+    assert b["az0"] == pytest.approx(100 * 0.5) and b["az1"] == pytest.approx(141 * 0.5)
+    assert (b["y0"], b["y1"]) == (40, 90)
+    # boxes drawn on the axis strip are rejected
+    with mock.patch.object(QtWidgets.QInputDialog, "getText",
+                           return_value=("drone", True)):
+        v.set_roi((10, v.H - 5, 30, v.H - 1))
+    assert len(v.boxes) == 1
+    # sidecar keeps markers and boxes together; loader splits them again
+    v._load_annotations(str(tmp_path / "clip.raw"))
+    assert len(v.annotations) == 1 and len(v.boxes) == 1
+    # drawing paints the box border into a panorama-sized frame
+    rgb = np.zeros((v.H, 720, 3), np.uint8)
+    v.mapall_chk.setChecked(True)
+    v._draw_label_boxes(rgb, tc=1.0)
+    assert (rgb[40, 100:141] == v._BOX_COL).all()
+    # deleting the last visible box empties the store
+    v._del_last_box()
+    assert not v.boxes

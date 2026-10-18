@@ -440,6 +440,12 @@ class Player(QtWidgets.QWidget):
         self.accum_count_mode = False; self.accum_n = 5000
         # annotations (U3)
         self.annotations = []; self._ann_path = None
+        # panorama bounding-box labels (ground truth for detector training):
+        # dicts {kind:'box', t, t0, t1, label, az0, az1, y0, y1} stored in the
+        # same _annotations.json sidecar as the time markers
+        self.boxes = []
+        self._last_box_label = "drone"
+        self._pano_roi_active = False     # view geometry is panorama px, not sensor px
         # result overlay (U4)
         self._result_track = None
         # FFT frame counter (U2)
@@ -680,6 +686,16 @@ class Player(QtWidgets.QWidget):
         ann_del_btn = QtWidgets.QPushButton("× Del nearest")
         ann_del_btn.setToolTip("Remove the annotation closest to the current playhead position.")
         ann_del_btn.clicked.connect(self._del_nearest_annotation); ann_row.addWidget(ann_del_btn)
+        self.label_box_btn = QtWidgets.QPushButton("▣ Label box"); self.label_box_btn.setCheckable(True)
+        self.label_box_btn.setToolTip("Panorama ground-truth labeling: while checked (and the view is Panorama /\n"
+                                      "Phase-Locked Pano), drag a rectangle around the target to record a labeled\n"
+                                      "bounding box in world coordinates (azimuth°, sensor row) at the current\n"
+                                      "playhead. Saved with the time markers in <file>_annotations.json.")
+        self.label_box_btn.toggled.connect(lambda _on: self._render(self.current_t()))
+        ann_row.addWidget(self.label_box_btn)
+        box_del_btn = QtWidgets.QPushButton("× Del box")
+        box_del_btn.setToolTip("Remove the most recently added visible bounding-box label.")
+        box_del_btn.clicked.connect(self._del_last_box); ann_row.addWidget(box_del_btn)
         ann_row.addStretch(1); v.addLayout(ann_row)
         # Panorama/Radar accumulation ("map window") — the map-view equivalent of accum time
         row3 = QtWidgets.QHBoxLayout()
@@ -774,7 +790,11 @@ class Player(QtWidgets.QWidget):
         self._refresh_color_btns()
 
     # ---- ROI + colors ----
-    def set_roi(self, roi): self.roi = roi; self._render(self.current_t())
+    def set_roi(self, roi):
+        if self._pano_roi_active:         # panorama-px rectangle -> labeled box
+            self._add_label_box(roi)
+            return
+        self.roi = roi; self._render(self.current_t())
     def clear_roi(self): self.roi = None; self._render(self.current_t())
 
     def _pick_color(self, which):
@@ -1633,21 +1653,83 @@ class Player(QtWidgets.QWidget):
         if not self._ann_path: return
         try:
             with open(self._ann_path, 'w', encoding='utf-8') as f:
-                json.dump(self.annotations, f, indent=2)
+                json.dump(self.annotations + self.boxes, f, indent=2)
         except Exception:
             pass
 
     def _load_annotations(self, raw_path):
         self._ann_path = os.path.splitext(raw_path)[0] + '_annotations.json'
-        self.annotations = []
+        self.annotations = []; self.boxes = []
         if os.path.isfile(self._ann_path):
             try:
                 with open(self._ann_path, encoding='utf-8') as f:
-                    self.annotations = json.load(f)
+                    entries = json.load(f)
+                # one sidecar, two record kinds: time markers {'t','label'}
+                # and panorama boxes {'kind':'box', ...}
+                self.annotations = [e for e in entries if e.get('kind') != 'box']
+                self.boxes = [e for e in entries if e.get('kind') == 'box']
             except Exception:
-                self.annotations = []
+                self.annotations = []; self.boxes = []
         if self.dur:
             self._ann_bar.set_dur(self.dur, self.annotations); self._ann_bar.setEnabled(True)
+
+    # ---- panorama bounding-box labels (ground truth capture) ----
+    _BOX_COL = (255, 210, 60)
+
+    def _add_label_box(self, roi_px):
+        """Convert a panorama-pixel rectangle to a labeled world-coordinate box.
+        Columns are world azimuth (720 px = 360°); rows are raw sensor rows.
+        The bottom 14 rows are the degree-axis strip, not data."""
+        x0, y0, x1, y1 = roi_px
+        BAR_H = 14
+        if y0 >= self.H - BAR_H:           # drawn entirely on the axis strip
+            return
+        y1 = min(y1, self.H - BAR_H - 1)
+        text, ok = QtWidgets.QInputDialog.getText(
+            self, "Label box", "Target label:", text=self._last_box_label)
+        if not ok or not text.strip():
+            return
+        self._last_box_label = text.strip()
+        tc = self.current_t()
+        t0 = 0.0 if self.mapall_chk.isChecked() else max(0.0, tc - self.map_window)
+        self.boxes.append({
+            'kind': 'box', 't': tc, 't0': t0, 't1': tc,
+            'label': self._last_box_label,
+            'az0': x0 * 360.0 / 720.0, 'az1': (x1 + 1) * 360.0 / 720.0,
+            'y0': int(y0), 'y1': int(y1),
+        })
+        self._save_annotations()
+        self._render(tc)
+
+    def _visible_boxes(self, tc):
+        if self.mapall_chk.isChecked():
+            return self.boxes
+        t0w = max(0.0, tc - self.map_window)
+        return [b for b in self.boxes if t0w <= b['t'] <= tc + 1e-9]
+
+    def _del_last_box(self):
+        vis = self._visible_boxes(self.current_t())
+        if not vis:
+            return
+        self.boxes.remove(vis[-1])
+        self._save_annotations()
+        self._render(self.current_t())
+
+    def _draw_label_boxes(self, rgb, tc):
+        """Paint stored ground-truth boxes onto a panorama frame (in place)."""
+        vis = self._visible_boxes(tc)
+        if not vis:
+            return
+        h, w = rgb.shape[:2]; scale = w / 360.0
+        for b in vis:
+            c0 = int(b['az0'] * scale) % w; c1 = int(b['az1'] * scale) % w
+            r0 = int(np.clip(b['y0'], 0, h - 1)); r1 = int(np.clip(b['y1'], 0, h - 1))
+            if c1 >= c0:
+                rgb[r0, c0:c1 + 1] = self._BOX_COL; rgb[r1, c0:c1 + 1] = self._BOX_COL
+            else:                                   # box straddles the 0° wrap
+                rgb[r0, c0:] = self._BOX_COL; rgb[r0, :c1 + 1] = self._BOX_COL
+                rgb[r1, c0:] = self._BOX_COL; rgb[r1, :c1 + 1] = self._BOX_COL
+            rgb[r0:r1 + 1, c0] = self._BOX_COL; rgb[r0:r1 + 1, c1] = self._BOX_COL
 
     def _toggle_fft(self, on):
         self._fft_panel.setVisible(on)
@@ -1735,15 +1817,18 @@ class Player(QtWidgets.QWidget):
         dlg = FFTDialog(self, src_path=self._src_path, parent=self)
         dlg.show()
 
-    def _show(self, rgb, sensor_mode):
+    def _show(self, rgb, sensor_mode, pano_geom=False):
         h, w = rgb.shape[:2]
         qi = QtGui.QImage(rgb.data, w, h, 3 * w, QtGui.QImage.Format_RGB888)
         pm = QtGui.QPixmap.fromImage(qi).scaled(self.view.size(), QtCore.Qt.KeepAspectRatio, QtCore.Qt.FastTransformation)
         self.view.setPixmap(pm)
-        if sensor_mode and pm.width():
+        if pm.width() and (sensor_mode or pano_geom):
             scale = pm.width() / w
             ox = (self.view.width() - pm.width()) // 2; oy = (self.view.height() - pm.height()) // 2
-            self.view.set_geom(scale, ox, oy, self.W, self.H)
+            # sensor views map widget px -> sensor px; panorama label mode maps
+            # widget px -> panorama px (720 x H image incl. the axis strip)
+            gw, gh = (w, h) if pano_geom else (self.W, self.H)
+            self.view.set_geom(scale, ox, oy, gw, gh)
 
     def _render(self, tc):
         if self.ev is None: return
@@ -1777,8 +1862,14 @@ class Player(QtWidgets.QWidget):
         # U4: bearing overlay from last analysis run
         if self._result_track is not None:
             self._draw_result_overlay(rgb, tc, pano_mode=(mode in ("Panorama", "Phase-Locked Pano", "Dual-Cam Diff")))
-        self.view.roi_enabled = sensor
-        self._show(rgb, sensor)
+        # ground-truth bounding-box labels live on the panorama views
+        pano_label = mode in ("Panorama", "Phase-Locked Pano") and rgb is not None \
+            and rgb.shape[1] == 720
+        if pano_label:
+            self._draw_label_boxes(rgb, tc)
+        self._pano_roi_active = pano_label and self.label_box_btn.isChecked()
+        self.view.roi_enabled = sensor or self._pano_roi_active
+        self._show(rgb, sensor, pano_geom=self._pano_roi_active)
         n_win = hi - lo
         rate_str = (f"{n_win/self.accum/1e3:.0f}k ev/s" if not self.accum_count_mode else f"{n_win} ev")
         roistr = f"  ROI {self.roi}" if self.roi else ""
@@ -1822,6 +1913,9 @@ class Player(QtWidgets.QWidget):
             rgb = self._mark_estimated(rgb)
         if self._result_track is not None:
             self._draw_result_overlay(rgb, tc, pano_mode=(mode in ("Panorama", "Phase-Locked Pano", "Dual-Cam Diff")))
+        if (mode in ("Panorama", "Phase-Locked Pano") and rgb is not None
+                and rgb.shape[1] == 720):
+            self._draw_label_boxes(rgb, tc)   # labels ride along in video exports
         return rgb
 
 

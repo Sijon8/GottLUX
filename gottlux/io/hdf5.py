@@ -13,8 +13,10 @@ first-class recording container next to ``.raw``:
   (source file name, the absolute ``t0_us`` origin, the gottlux version). An optional
   window/ROI exports a sub-clip with :func:`~gottlux.io.writer.cut_clip` semantics.
 * :func:`read_events` / :class:`H5EventSource` — read them back, accepting the Metavision
-  compound layout **and** plain parallel ``x/y/p/t`` datasets (at the root or under an
-  ``events/`` group). :func:`read_events` materializes a whole file into the same dict
+  compound layout, plain parallel ``x/y/p/t`` datasets (at the root or under an
+  ``events/`` group), **and** the 4xN ``x/y/p/t`` matrix the MATLAB exporters write under
+  an arbitrary dataset name (see :func:`_matrix_rows`).
+  :func:`read_events` materializes a whole file into the same dict
   shape the decode cache produces; :class:`H5EventSource` streams bounded blocks, which is
   how :mod:`gottlux.io.cache` builds its ``.bin`` cache from an ``.h5`` — after which the
   file opens instantly everywhere a ``.raw`` does (GUI, quick viewer, CLI, library).
@@ -39,6 +41,14 @@ HDF5_EXTS = (".h5", ".hdf5")
 
 #: The compound row dtype of a Metavision ``CD/events`` dataset (14 bytes/event).
 EVENT_DTYPE = np.dtype([("x", "<u2"), ("y", "<u2"), ("p", "<i2"), ("t", "<i8")])
+
+#: Dataset names tried first for a 4xN event matrix; any other name still opens -- see
+#: :func:`_matrix_rows`.
+MATRIX_NAMES = ("events", "data")
+
+#: Row order of that matrix, the usual MATLAB export convention: x, y, polarity,
+#: time. Assumed, then verified against the data (see :func:`_matrix_rows`).
+MATRIX_ORDER = ("x", "y", "p", "t")
 
 #: Events per HDF5 chunk in files we write (~3.7 MB of rows — a good gzip/IO unit).
 H5_CHUNK_EVENTS = 262_144
@@ -132,13 +142,79 @@ def _geometry_from_attrs(attrs):
     return None, None
 
 
+def _is_time_row(v):
+    """A row of a candidate event matrix that could be the timestamps: non-decreasing."""
+    return v.size > 0 and bool(np.all(np.diff(v) >= 0))
+
+
+def _is_polarity_row(v):
+    """A row that could be the polarities: at most three distinct values, all in
+    ``{-1, 0, 1}`` — covering both the ``0/1`` and the Prophesee ``±1`` conventions."""
+    u = np.unique(v)
+    return u.size <= 3 and bool(np.all(np.isin(u, (-1.0, 0.0, 1.0))))
+
+
+def _rows_from_data(block):
+    """Identify ``{field: row}`` from a sample of a four-row matrix, or ``None``.
+
+    The fallback for a file whose rows are not in the documented ``x, y, p, t`` order: the
+    monotonic row is time, a small-cardinality ``{-1, 0, 1}`` row is polarity, and the two
+    that remain keep their file order as ``x, y`` (every convention in the wild writes x
+    before y). Used only when the assumed order fails its check, so a correctly ordered
+    file is never re-interpreted.
+    """
+    times = [i for i in range(4) if _is_time_row(block[i])]
+    pols = [i for i in range(4) if _is_polarity_row(block[i])]
+    times = [i for i in times if i not in pols] or times   # a constant row passes both
+    if not times or not pols:
+        return None
+    ti = times[-1]                                        # time is last in every known layout
+    pi = next((i for i in pols if i != ti), None)
+    if pi is None:
+        return None
+    xy = [i for i in range(4) if i not in (ti, pi)]
+    if len(xy) != 2:
+        return None
+    return {"x": xy[0], "y": xy[1], "p": pi, "t": ti}
+
+
+def _matrix_rows(node, sample=65_536):
+    """Map an event **matrix** dataset to ``(axis, {field: row})``, or ``None``.
+
+    MATLAB event exports commonly store a whole recording as one
+    plain 2-D float dataset of four parallel rows ``x, y, p, t``: no compound dtype, no
+    field names, and a dataset name that carries no layout meaning.
+    *axis* is the axis events run along — 1 for the usual ``(4, N)``, 0 for a
+    transposed ``(N, 4)``.
+
+    :data:`MATRIX_ORDER` is assumed and then **checked** against a leading sample (time
+    non-decreasing, polarity low-cardinality); only if that check fails are the rows
+    identified from the data by :func:`_rows_from_data`. Returns ``None`` when *node* is
+    not a numeric four-row matrix at all, so :func:`_locate` can keep looking.
+    """
+    shape = node.shape
+    if len(shape) != 2 or 4 not in shape or node.dtype.names or node.dtype.kind not in "fiu":
+        return None
+    axis = 1 if shape[0] == 4 else 0            # (4, N) is the MATLAB norm; (N, 4) transposed
+    m = min(int(shape[axis]), int(sample))
+    block = np.asarray(node[:, :m] if axis == 1 else node[:m, :].T, dtype=np.float64)
+    rows = {k: i for i, k in enumerate(MATRIX_ORDER)}
+    if m and not (_is_time_row(block[rows["t"]]) and _is_polarity_row(block[rows["p"]])):
+        rows = _rows_from_data(block)
+        if rows is None:
+            return None
+    return axis, rows
+
+
 def _locate(f, path):
     """Find the event data in an open HDF5 file → ``(kind, node)``.
 
     *kind* ``"compound"``: a Metavision-style compound dataset with ``x/y/p/t`` fields
     (``CD/events``, or a root-level ``events`` dataset). *kind* ``"plain"``: four parallel
     1-D datasets ``x, y, p, t`` — inside an ``events/`` group or at the root — returned as
-    a name→dataset dict. Anything else raises the actionable :class:`FusionError`.
+    a name→dataset dict. *kind* ``"matrix"``: a single 2-D ``x/y/p/t`` matrix written by
+    the MATLAB exporters, returned as ``(dataset, axis, {field: row})`` — see
+    :func:`_matrix_rows`. Anything else raises the actionable :class:`FusionError`.
     """
     import h5py
     fields = ("x", "y", "p", "t")
@@ -153,8 +229,32 @@ def _locate(f, path):
             return "plain", {k: node[k] for k in fields}
     if all(k in f for k in fields):
         return "plain", {k: f[k] for k in fields}
-    raise _err(f"{path!r}: no 'CD/events' (or 'events') compound dataset and no plain "
-               "x/y/p/t datasets — not a recognized HDF5 event file")
+    for name in (*MATRIX_NAMES, *(k for k in f if k not in MATRIX_NAMES)):
+        node = f.get(name)
+        if not isinstance(node, h5py.Dataset):
+            continue
+        got = _matrix_rows(node)
+        if got is not None:
+            return "matrix", (node, *got)
+    raise _err(f"{path!r}: no 'CD/events' (or 'events') compound dataset, no plain "
+               f"x/y/p/t datasets and no 4xN x/y/p/t event matrix — not a recognized "
+               f"HDF5 event file{_layout_hint(f)}")
+
+
+def _layout_hint(f):
+    """The extra clause that names *why* a structurally-empty export has no events.
+
+    The common one is an interrupted Metavision/HDF5 conversion: the ``CD`` group is there
+    with its ``indexes`` but the ``events`` dataset it indexes was never written, which
+    looks identical to an unknown layout without this hint.
+    """
+    import h5py
+    cd = f.get("CD")
+    if isinstance(cd, h5py.Group) and "events" not in cd:
+        return (f" — the file does have a 'CD' group, but it holds only {sorted(cd)} and "
+                "no 'events' dataset, so the conversion that wrote it never stored the "
+                "event stream; re-export it from the original .raw")
+    return ""
 
 
 # ====================================================================================
@@ -179,6 +279,9 @@ class H5EventSource:
             self._kind, self._node = _locate(self._f, self.path)
             if self._kind == "compound":
                 self.n = int(self._node.shape[0])
+            elif self._kind == "matrix":
+                node, axis, _rows = self._node
+                self.n = int(node.shape[axis])
             else:
                 lens = {k: int(d.shape[0]) for k, d in self._node.items()}
                 if len(set(lens.values())) > 1:
@@ -211,6 +314,10 @@ class H5EventSource:
                 if self._kind == "compound":
                     rows = self._node[s:e]
                     out = (rows["x"], rows["y"], rows["p"], rows["t"])
+                elif self._kind == "matrix":
+                    node, axis, rmap = self._node
+                    blk = node[:, s:e] if axis == 1 else node[s:e, :].T
+                    out = tuple(blk[rmap[k]] for k in ("x", "y", "p", "t"))
                 else:
                     out = tuple(self._node[k][s:e] for k in ("x", "y", "p", "t"))
             except OSError as err:
@@ -233,7 +340,9 @@ class H5EventSource:
 def read_events(path, block=BLOCK_EVENTS) -> dict:
     """Read a whole HDF5 event file into the dict shape the decode cache produces.
 
-    Accepts every layout :class:`H5EventSource` recognizes. Returns ``x, y`` (uint16,
+    Accepts every layout :class:`H5EventSource` recognizes — including the MATLAB 4xN
+    matrix, whose float rows and ``±1`` polarity are normalized here like any other
+    source. Returns ``x, y`` (uint16,
     clipped to the declared geometry when there is one), ``p`` (uint8, 1 = ON), ``t``
     (int64 µs, time-sorted and re-zeroed to the first event) plus ``t0_us, width, height,
     n, n_on, fmt='hdf5', meta, source_path`` — and ``time_shift`` (the Metavision save

@@ -76,6 +76,33 @@ def _icon_file():
     return str(ico) if ico.exists() else None
 
 
+#: Where Explorer stores the *user's* pinned default for an extension. Windows honours it
+#: ahead of anything under ``Software\Classes``, and protects it with a DENY ACL so that no
+#: program can repoint a default silently — see :func:`_blocking_user_choice`.
+_FILEEXTS = r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts"
+
+
+def _blocking_user_choice(ext):
+    r"""The foreign ProgID pinned to *ext* by Explorer's UserChoice, or ``None``.
+
+    Registration writes the ``Software\Classes`` association, but a UserChoice — set when
+    the user picks an app in the Open-with dialog, or shipped as a default (Photos claims
+    ``.raw`` as a camera format) — outranks it, and Windows refuses to let us delete or
+    overwrite it. Surfacing it lets :func:`register` name the extensions that still need
+    the manual Open-with fix instead of reporting a success the shell will ignore.
+    """
+    if not _is_windows():
+        return None
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            rf"{_FILEEXTS}\{ext}\UserChoice") as k:
+            progid = winreg.QueryValueEx(k, "ProgId")[0]
+    except OSError:
+        return None
+    return None if progid == PROGID else progid
+
+
 def _notify_shell():
     """Tell Explorer the association table changed so the new handler takes effect at once."""
     try:
@@ -254,12 +281,19 @@ def register():
         return False, f"Could not write the registry: {e}"
 
     _notify_shell()
-    exts = " / ".join(EXTS)
-    msg = (f"Registered: double-clicking a {exts} file now opens the GottLUX quick viewer.\n"
-           f"  launch: {cmd}\n"
-           "If Windows still opens another app (a locked default association), right-click the "
-           "file → Open with → Choose another app → 'GottLUX viewer' → check 'Always'.")
-    return True, msg
+    blocked = {e: p for e in EXTS for p in [_blocking_user_choice(e)] if p}
+    ok = " / ".join(e for e in EXTS if e not in blocked)
+    msg = f"Registered: {cmd}\n"
+    if ok:
+        msg += f"  double-clicking {ok} now opens the GottLUX quick viewer.\n"
+    if blocked:
+        listed = ", ".join(f"{e} (pinned to {p})" for e, p in blocked.items())
+        msg += (f"  STILL BLOCKED: {listed}.\n"
+                "  Windows keeps a per-user default (UserChoice) that outranks this "
+                "registration and refuses to let any program change it. Fix by hand, once "
+                "per extension: right-click such a file -> Open with -> Choose another app "
+                "-> 'GottLUX event recording' -> tick 'Always use this app'.")
+    return True, msg.rstrip()
 
 
 def unregister():

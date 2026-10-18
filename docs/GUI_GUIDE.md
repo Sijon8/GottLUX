@@ -7,7 +7,16 @@ on a background thread behind a progress bar; the same recording then feeds all 
 This guide walks the core analysis tabs (Live viewer, Event-rate tower, Space-time 3D, Flutter
 workbench, Sandbox, Fusion lab, Timeline) plus the **Canvas composer** and the **Tools menu**;
 the **Multi-clip**, **Range lab**, and **EBS viewer** tabs are summarized in the
-[README](../README.md).
+[README](../README.md). One EBS-viewer feature is documented here because it produces
+data other tools consume: **panorama bounding-box labeling**. In the *Panorama* or
+*Phase-Locked Pano* view, check **▣ Label box** in the annotation row and drag a
+rectangle around the target; a label prompt (pre-filled with the last label) records the
+box in world coordinates — `az0/az1` in degrees, `y0/y1` in sensor rows — plus the
+playhead time `t` and on-screen map window `t0/t1`, appended to the
+`<file>_annotations.json` sidecar as `{"kind": "box", ...}` records alongside the time
+markers. Boxes render as gold outlines live and in video exports; **× Del box** removes
+the most recent visible one. Use it to build ground-truth sets for moving-target
+detection on rotating recordings.
 
 The window title bar shows the loaded recording's geometry, event count, duration, encoding,
 and mode (ROTATION if telemetry was found, else STARING).
