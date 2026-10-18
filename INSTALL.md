@@ -133,7 +133,11 @@ gottlux examples/data/5inch_quadcopter.raw
 every later open is instant. **Files larger than ~200 MB open in preview mode**: sampled
 sections from across the recording appear in seconds while the full decode completes in the
 background (see the README's *Massive files* section). Set `GOTTLUX_PREVIEW_THRESHOLD_MB`
-to tune or disable (`0`) this behavior.
+to tune or disable (`0`) this behavior. The **quick viewer** (`gottlux-view`) goes further for
+files of **100 MB or more**: it reads only the first, middle and last 25 MB (the first is on
+screen in about a second), decodes other moments only when you seek to them, and leaves the
+full decode to its **Decode whole file** button; `GOTTLUX_QUICKVIEW_SAMPLE_MB` tunes or
+disables (`0`) it.
 
 ---
 

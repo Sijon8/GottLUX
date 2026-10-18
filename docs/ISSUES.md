@@ -1,7 +1,13 @@
 # GottLUX issue tracker — audit of 2026-10-18
 
+**State.** The audit fixes (GL-01…25, 35, 36) and the Studio were published to GitHub `main`
+on 2026-10-18 (`95ebdec..3e34bfc`, 14 commits); the website now carries `studio.html`. Since
+then the quick viewer opens large files as byte samples and provenance records partial
+decodes (see `CHANGELOG.md`, *quick viewer opens large files as samples*). The open items
+below (GL-26…34, 37, 38) are unchanged by it.
+
 Built on `95ebdec` plus the pending panorama box labels, MATLAB HDF5 matrix reader and file
-associations, so the fixes sit on top of them.
+associations (`62ae51b`), so the fixes sit on top of them.
 
 **How this was checked.** Python 3.12, PySide6 6.11, pyqtgraph 0.14, matplotlib 3.11, numpy 2.5.
 The full test suite was run offscreen. Every tab was rendered offscreen with the application's
@@ -9,13 +15,13 @@ own theme (`style.load_theme` + `apply_app_style`, as `main()` does), dark and l
 1280×820, 1366×700 and 1920×1040, with `Humming_Bird_Fight_merged_2.raw` loaded. The headless
 pipeline was run on the hummingbird clip (`--detector hummingbird`, every named plot) and on
 `5inch_quadcopter_rotating.raw` (`--assume_spin auto`). Before/after screenshots came from a
-worktree of `05f8cb0` against this branch. The two OpenGL tabs (Space-time 3D, Event-rate tower)
+worktree of `62ae51b` against this branch. The two OpenGL tabs (Space-time 3D, Event-rate tower)
 could not be rendered: offscreen Qt has no OpenGL, and a hidden native window has no GL context.
 
 Severity: **High** = wrong results or an unusable window; **Medium** = misleading output or a
 broken control; **Low** = cosmetic or minor.
 
-Each fixed item has a regression test in `tests/test_audit_fixes.py` unless noted. All 16 fail on `05f8cb0` (the GL-35 test hangs there) and pass on this branch.
+Each fixed item has a regression test in `tests/test_audit_fixes.py` unless noted. All 16 fail on `62ae51b` (the GL-35 test hangs there) and pass on this branch.
 
 ## Fixed on this branch
 
@@ -46,7 +52,7 @@ Each fixed item has a regression test in `tests/test_audit_fixes.py` unless note
 | GL-23 | Medium | GUI (box labels, uncommitted work) | **Annotation sidecar**: a failed save was swallowed (`except: pass`), so labels made beside a read-only recording were lost silently. An unreadable sidecar was overwritten on the next save. The write was not atomic. | Reading the code. Shared data folders are often read-only. | The save writes to `.tmp` then `os.replace`, and a failure warns once. An unreadable sidecar is copied to `*.unreadable-<epoch>` before anything can overwrite it. |
 | GL-24 | Low | GUI (box labels, uncommitted work) | A box dragged to the panorama's right edge (az1 = 360°) folded to column 0 and drew a stray edge at 0°. | `_draw_label_boxes` with `az1 = 360`. | It is clamped to the last column. |
 | GL-25 | Low | GUI | The compare pane paused only the shared clock on a tab switch, so its Multi-clip clock kept running. | Reading the code. | It uses `_pause_all_clocks()`, like the main tabs. No test. |
-| GL-35 | High | Rotation | **`estimate_spin_period_s` could loop forever**, hanging `--assume_spin auto` and anything else that estimates a spin. The pass scan jumps to `pk + guard`; when the strongest sample in the window is the window's left edge (a pass wider than 0.4 periods, at or above the 90th-percentile threshold, whose maximum is its first bin), `pk + guard` is the current index and the scan never advances. | Found while building the Studio's radar look: a synthetic spinning scene hung in `telemetry.py:99`. `test_spin_period_estimate_terminates` hangs on `05f8cb0` (killed by a 20 s timeout) and passes here. | It always advances (`max(pk + guard, i + 1)`). |
+| GL-35 | High | Rotation | **`estimate_spin_period_s` could loop forever**, hanging `--assume_spin auto` and anything else that estimates a spin. The pass scan jumps to `pk + guard`; when the strongest sample in the window is the window's left edge (a pass wider than 0.4 periods, at or above the 90th-percentile threshold, whose maximum is its first bin), `pk + guard` is the current index and the scan never advances. | Found while building the Studio's radar look: a synthetic spinning scene hung in `telemetry.py:99`. `test_spin_period_estimate_terminates` hangs on `62ae51b` (killed by a 20 s timeout) and passes here. | It always advances (`max(pk + guard, i + 1)`). |
 | GL-36 | Low | Rotation | The same estimator timed each pass by its argmax. On a flat-topped pass (a source crossing the field of view) the argmax lands anywhere on the top, which put the period off by about 2 %; for de-rotation that is about 7° of drift per revolution. | Synthetic 0.5 s spin: 0.5096–0.5109 s before; 0.4989–0.5053 s after (three noise seeds). On `5inch_quadcopter_rotating.raw` it moves from 0.93880 to 0.93996 s. | Passes are timed by their rate-weighted centroid above the threshold. |
 
 ## Open — found, not changed

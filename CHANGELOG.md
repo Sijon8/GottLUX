@@ -90,6 +90,28 @@ Audit of 2026-10-18; each item is tracked in [`docs/ISSUES.md`](docs/ISSUES.md) 
   labels, an unreadable sidecar is kept as `*.unreadable-<epoch>`, saves are atomic, and a
   box reaching 360° no longer draws a stray edge at 0° (GL-23, GL-24).
 
+### Added — quick viewer opens large files as samples
+
+- **`gottlux-view` opens a `.raw` of 100 MB or more in about a second.** Without a decode
+  cache, such a file opens as byte samples of the encoded stream: the first 25 MB plays at
+  once; 25 MB from the middle and 25 MB from the end follow, read by seeking straight to them
+  (`gottlux.io.preview.sample_recording`). There is no whole-file pass: the end time comes
+  from the last chunk, so the timeline still spans the whole file. Seeking elsewhere decodes
+  about 2 M words there on demand, placed by interpolating the byte↔time anchors gathered so
+  far. Sampled events are identical to a full decode's at those moments (tested on synthetic
+  files and on a 409 MB real recording; pre-roll and time zero match too). On that 409 MB
+  file the first frame shows at 1.6 s and all three samples by 4.5 s, against 20 s for the
+  full decode. EVT3 samples its start only. `GOTTLUX_QUICKVIEW_SAMPLE_MB` sets the threshold
+  (`0` disables); `SAMPLE_CHUNK_MB` the chunk size.
+- **No automatic full decode in the quick viewer** for sampled files (it used to start one,
+  writing a full cache beside the data). A **Decode whole file** button does it on request
+  and swaps the full recording in without moving the playhead.
+- **Provenance records partial decodes.** An export made from a sampled or preview view
+  records the source as `decoded: "partial"` with `events_decoded`, the decoded
+  `coverage_s` spans and a description of the samples, and keeps `events` for the whole
+  file's count (from a cache, else unknown) instead of the number of events that happened to
+  be decoded. Export READMEs flag it; Studio recipes carry `source_decode` and a note.
+
 ### Added — Studio
 
 - **GottLUX Studio: short GIF / MP4 / WebM shots of a recording.** A *shot* is a plain-data

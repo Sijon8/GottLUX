@@ -204,6 +204,17 @@ is even interesting:
   playable in seconds, with the timeline spanning the *whole* file. Seeking into an
   un-decoded region decodes just that slice on demand, and the full cache completes in the
   background, then swaps in seamlessly.
+- **Quick viewer: byte samples, no wait.** In `gottlux-view` (the double-click viewer) a
+  `.raw` of **100 MB or more** with no cache opens as samples of the encoded stream: the
+  **first 25 MB** plays within about a second, then **25 MB from the middle and 25 MB from
+  the end** are read by seeking straight to them — nothing in between is read, and the
+  timeline still spans the whole file (its end time comes from the last chunk). Seeking
+  anywhere else decodes about 8–16 MB there on demand. Nothing is decoded in the background
+  and no cache is written until you press **Decode whole file**. Sampled events are exactly
+  the events a full decode has at those moments. EVT3 can only be sampled at its start (its
+  decoder state cannot be entered mid-file). `GOTTLUX_QUICKVIEW_SAMPLE_MB` sets the
+  threshold (`0` turns sampling off). Exports made from a sampled view say so in their
+  provenance (`decoded: partial`, the decoded spans).
 - **Cut without decoding.** A time-window cut of an EVT2.1 file operates directly on the
   bytes (`File → Quick-cut`), so trimming a huge capture down to the interesting seconds
   never pays the full decode.

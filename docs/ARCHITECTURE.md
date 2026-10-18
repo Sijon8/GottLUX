@@ -15,7 +15,8 @@ gottlux/
     paths.py           Windows long-path (\\?\) safety, platform fallbacks, SHA-256
     decode.py          pure-NumPy EVT2.1 / EVT2.0 / EVT3 decoders (stateless, chunkable)
     cache.py           decode-once, streaming, memmapped cache (bounded RAM for GB files)
-    preview.py         sampled fast preview for massive files (sections now, full decode behind)
+    preview.py         sampled fast preview for massive files (sections now, full decode behind);
+                       byte-sampled open for the quick viewer (first/middle/last 25 MB, no index)
     recording.py       Recording + EventWindow — THE data model everything operates on
     telemetry.py       rotation ground truth (Hall-sync boundaries + azimuth)
     writer.py          EVT2.1 encoder + clip cutter/stitcher (streamed, bounded-RAM; inverse of decode)
