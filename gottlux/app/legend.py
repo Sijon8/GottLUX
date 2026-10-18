@@ -137,8 +137,11 @@ class FrequencyLegend(QtWidgets.QWidget):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         w = self.width()
-        bar_w = max(80, w - 120)
-        x0 = 70
+        fm = p.fontMetrics()
+        note = "opacity = SNR"
+        x0 = fm.horizontalAdvance("freq (Hz)") + 10
+        # leave room for the right-hand note (a fixed 120 px margin clipped it to "opacity")
+        bar_w = max(80, w - x0 - fm.horizontalAdvance(note) - 14)
         grad = QtGui.QLinearGradient(x0, 0, x0 + bar_w, 0)
         for pos, c in _qcolor_stops(self._cmap):
             grad.setColorAt(pos, c)
@@ -149,5 +152,5 @@ class FrequencyLegend(QtWidgets.QWidget):
         hi = f"{self._fmax:.0f}"
         p.drawText(x0 + bar_w - p.fontMetrics().horizontalAdvance(hi), 30, hi)
         p.setPen(QtGui.QColor(style.MUTED))
-        p.drawText(x0 + bar_w + 8, 14, "opacity = SNR")
+        p.drawText(x0 + bar_w + 8, 14, note)
         p.end()

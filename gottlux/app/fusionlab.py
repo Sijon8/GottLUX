@@ -51,7 +51,9 @@ class FusionLab(QtWidgets.QWidget):
         self.glw = pg.GraphicsLayoutWidget()
         self.glw.setBackground(style.BG)
         self.p_ebs = self.glw.addPlot(row=0, col=0, title="EBS event rate (events/s)")
-        self.p_ebs.setLabel("left", "ev/s")
+        # with units pyqtgraph scales the ticks (0.4 … 1.2 Mev/s) instead of mixing
+        # "1.2e+06" with "800000" on one axis
+        self.p_ebs.setLabel("left", "event rate", units="ev/s")
         self.p_ebs.showGrid(x=True, y=True, alpha=0.25)
         self.c_ebs = self.p_ebs.plot(pen=pg.mkPen("#e8820c", width=1))
         self.p_aud = self.glw.addPlot(row=1, col=0, title="Audio RMS (load a .wav)")

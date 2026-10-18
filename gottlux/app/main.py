@@ -653,7 +653,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                 self.fusionlab2, self.timeline2)
         self.tabs2 = self._make_tabs(self._compare_panels)
         self.tabs2.setCurrentIndex(3)        # default the right pane to a different view
-        self.tabs2.currentChanged.connect(lambda *_: self.clock.pause())
+        # every clock, as for the main tabs: the compare pane's Multi-clip has its own
+        self.tabs2.currentChanged.connect(lambda *_: self._pause_all_clocks())
         self.splitter.addWidget(self.tabs2)
         if self.rec is not None:
             for p in self._compare_panels:

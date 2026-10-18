@@ -337,22 +337,35 @@ class DensityStrip(QtWidgets.QLabel):
 
     def _render_bars(self):
         """Draw the cached waveform in the palette's plate + accent (also what a theme
-        switch re-runs, so the strip never stays on the outgoing theme's colours)."""
+        switch re-runs, so the strip never stays on the outgoing theme's colours).
+
+        The image is painted scaled to the strip in :meth:`paintEvent` rather than set as a
+        QLabel pixmap: a pixmap becomes the label's minimum size, so the strip (built while
+        its tab was hidden) kept that width — covering only part of the strip when the
+        window grew, and holding the whole main window at least that wide."""
         if self._norm is None:
             return
         norm = self._norm
         W = norm.size
         plate = QtGui.QColor(style.BG2).getRgb()[:3]
         bar = QtGui.QColor(style.ACCENT).getRgb()[:3]
-        img = np.empty((self._H, W, 3), np.uint8)
-        img[:, :] = plate
         bar_hs = (norm * self._H).astype(int)
-        for x in range(W):
-            if bar_hs[x] > 0:
-                img[self._H - bar_hs[x]:, x] = bar
-        qi = QtGui.QImage(img.data, W, self._H, 3 * W, QtGui.QImage.Format_RGB888)
-        self.setPixmap(QtGui.QPixmap.fromImage(qi).scaled(
-            self.size(), QtCore.Qt.IgnoreAspectRatio, QtCore.Qt.FastTransformation))
+        filled = np.arange(self._H)[:, None] >= (self._H - bar_hs)[None, :]
+        img = np.empty((self._H, W, 3), np.uint8)
+        img[:] = plate
+        img[filled] = bar
+        self._img = QtGui.QImage(img.data, W, self._H, 3 * W,
+                                 QtGui.QImage.Format_RGB888).copy()
+        self.update()
+
+    def paintEvent(self, e):
+        img = getattr(self, "_img", None)
+        if img is None:
+            super().paintEvent(e)
+            return
+        p = QtGui.QPainter(self)
+        p.drawImage(self.rect(), img)
+        p.end()
 
     def apply_theme(self, *_):
         """Re-take the plate and re-render the waveform after a light/dark switch."""
@@ -384,7 +397,7 @@ class AnnotationBar(QtWidgets.QWidget):
 
     def paintEvent(self, _):
         p = QtGui.QPainter(self)
-        p.fillRect(self.rect(), QtGui.QColor(12, 20, 28))
+        p.fillRect(self.rect(), QtGui.QColor(style.BG2))     # was a fixed dark bar in light theme
         if not self._dur: return
         for ann in self._annotations:
             x = int(ann['t'] / self._dur * (self.width() - 1))
@@ -401,6 +414,24 @@ class AnnotationBar(QtWidgets.QWidget):
                 dist = d; best = ann
         if best and dist < 12:
             self.jumped.emit(best['t'])
+
+
+class _ControlsScroll(QtWidgets.QScrollArea):
+    """Vertical-only scroll area that asks for its content's full height (so nothing scrolls
+    when there is room) but can shrink to a few rows when the window is short."""
+
+    def __init__(self, content):
+        super().__init__()
+        self.setWidget(content); self.setWidgetResizable(True)
+        self.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+
+    def sizeHint(self):
+        hint = self.widget().sizeHint()
+        return QtCore.QSize(hint.width(), hint.height() + 2)
+
+    def minimumSizeHint(self):
+        return QtCore.QSize(self.widget().minimumSizeHint().width(), 140)
 
 
 class Player(QtWidgets.QWidget):
@@ -453,9 +484,16 @@ class Player(QtWidgets.QWidget):
         self.col_mode = "band"            # column selection mode: "band" | "single" | "stack"
         self.col_stack = []               # list of int column indices (stack mode)
         self._col_lut = None              # bool [W] or None (all columns pass)
-        v = QtWidgets.QVBoxLayout(self)
+        outer = QtWidgets.QVBoxLayout(self)
         self.view = EventView(); self.view.roiSelected.connect(self.set_roi)
-        v.addWidget(self.view, 1)
+        outer.addWidget(self.view, 1)
+        # everything below the image lives in a scroll area: the stack of control rows is
+        # ~480 px tall, and as a plain layout it forced the main window to >= 963 px, so on
+        # a 768/720 px screen the bottom of every tab was out of reach
+        _controls = QtWidgets.QWidget()
+        v = QtWidgets.QVBoxLayout(_controls); v.setContentsMargins(0, 0, 0, 0)
+        self._controls_scroll = _ControlsScroll(_controls)
+        outer.addWidget(self._controls_scroll)
         # file-level readout
         self.readout = QtWidgets.QLabel("—"); self.readout.setStyleSheet(_mono_qss())
         v.addWidget(self.readout)
@@ -657,6 +695,7 @@ class Player(QtWidgets.QWidget):
         self.fmap_fhi_sp.valueChanged.connect(lambda v: self._set_and_render('fmap_fhi', v)); _fml.addWidget(self.fmap_fhi_sp); _fml.addStretch(1)
         self._novel_pages.addWidget(_fmw)
         v.addWidget(self._novel_pages)
+        self._novel_pages.setVisible(False)            # Events (page 0) has no extra controls
         # U2: live FFT spectrum panel (toggle-able)
         fft_row = QtWidgets.QHBoxLayout()
         self.fft_chk = QtWidgets.QCheckBox("Live FFT")
@@ -873,7 +912,10 @@ class Player(QtWidgets.QWidget):
         self._load_annotations(path)
         self._result_track = None   # clear any prior overlay
         self._src_path = path
-        self.scrub.setValue(0); self._render(0.0)
+        # t = 0 has nothing behind it (the window trails the playhead), so the viewer opened
+        # on a black frame reading "window: 0 ev"; open one accumulation window in instead
+        first = int(np.ceil(min(self.accum, self.dur) / self.dur * 1000)) if self.dur else 0
+        self.scrub.setValue(max(first, 1) if self.dur else 0); self._render(self.current_t())
 
     # Keep the WHOLE timestamp column in RAM up to ~100M events (~800 MB int64) so per-frame
     # seeking never touches the memmap (cold page-faults are what stutter on this platform).
@@ -1048,7 +1090,9 @@ class Player(QtWidgets.QWidget):
         self._render(self._pt)
         render_ms = int((time.perf_counter() - t0) * 1000)
         target_ms = self._wall_ms()
-        new_ms = max(1, render_ms + 1)                       # aim to fire just after render completes
+        # never faster than the requested frame rate (render_ms + 1 alone let a fast render
+        # run "realtime" playback several times too fast); never sooner than the render ends
+        new_ms = max(target_ms, render_ms + 1)
         if abs(self.timer.interval() - new_ms) > 2 and self.timer.isActive():
             self.timer.start(new_ms)                         # adapt interval; drains any queued backlog
 
@@ -1618,7 +1662,9 @@ class Player(QtWidgets.QWidget):
                "Space-Time Vol": 6, "IAT Surface": 7, "Dual-Cam Diff": 8,
                "Elev-Time Sweep": 9, "Freq Map": 10}
         if hasattr(self, '_novel_pages'):
-            self._novel_pages.setCurrentIndex(_VM.get(mode, 0))
+            idx = _VM.get(mode, 0)
+            self._novel_pages.setCurrentIndex(idx)
+            self._novel_pages.setVisible(idx >= 3)     # pages 0-2 are empty placeholders
         self._render(self.current_t())
 
     def _accum_count_toggled(self, on):
@@ -1650,12 +1696,22 @@ class Player(QtWidgets.QWidget):
         self._save_annotations()
 
     def _save_annotations(self):
+        """Write the sidecar. A failure is reported, never swallowed: the sidecar sits next
+        to the recording, which is often on a read-only share, and a silent failure lost
+        every label made in the session."""
         if not self._ann_path: return
         try:
-            with open(self._ann_path, 'w', encoding='utf-8') as f:
+            tmp = self._ann_path + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
                 json.dump(self.annotations + self.boxes, f, indent=2)
-        except Exception:
-            pass
+            os.replace(tmp, self._ann_path)          # never leave a half-written sidecar
+        except Exception as exc:
+            if not getattr(self, '_ann_save_warned', False):
+                self._ann_save_warned = True
+                QtWidgets.QMessageBox.warning(
+                    self, "Annotations not saved",
+                    f"Could not write {self._ann_path}:\n{exc}\n\nLabels stay in memory for "
+                    "this session only. Copy the recording to a writable folder to keep them.")
 
     def _load_annotations(self, raw_path):
         self._ann_path = os.path.splitext(raw_path)[0] + '_annotations.json'
@@ -1669,7 +1725,13 @@ class Player(QtWidgets.QWidget):
                 self.annotations = [e for e in entries if e.get('kind') != 'box']
                 self.boxes = [e for e in entries if e.get('kind') == 'box']
             except Exception:
+                # keep the unreadable sidecar: the next save would otherwise overwrite it
                 self.annotations = []; self.boxes = []
+                try:
+                    import shutil
+                    shutil.copy2(self._ann_path, self._ann_path + f'.unreadable-{int(time.time())}')
+                except OSError:
+                    pass
         if self.dur:
             self._ann_bar.set_dur(self.dur, self.annotations); self._ann_bar.setEnabled(True)
 
@@ -1722,7 +1784,10 @@ class Player(QtWidgets.QWidget):
             return
         h, w = rgb.shape[:2]; scale = w / 360.0
         for b in vis:
-            c0 = int(b['az0'] * scale) % w; c1 = int(b['az1'] * scale) % w
+            c0 = int(b['az0'] * scale) % w
+            # a box dragged to the right edge ends at 360°, which % w folded to column 0 and
+            # drew as a wrap-around box with a stray edge at 0°
+            c1 = w - 1 if b['az1'] >= 360.0 else int(b['az1'] * scale) % w
             r0 = int(np.clip(b['y0'], 0, h - 1)); r1 = int(np.clip(b['y1'], 0, h - 1))
             if c1 >= c0:
                 rgb[r0, c0:c1 + 1] = self._BOX_COL; rgb[r1, c0:c1 + 1] = self._BOX_COL

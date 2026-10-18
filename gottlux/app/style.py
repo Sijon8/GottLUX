@@ -91,6 +91,8 @@ THEME = DEFAULT_THEME
 #: The background the *previous* palette used — what :func:`restyle_plots` recognises as
 #: "this view was still showing the old theme" and is therefore safe to repaint.
 PREVIOUS_BG = ""
+#: The foreground (axis/tick/title ink) the previous palette used — see :func:`restyle_plots`.
+PREVIOUS_FG = ""
 
 # One explicit app-wide font stack so text metrics (and hence layouts) are the same on
 # Windows and Linux instead of whatever the platform default resolves to.
@@ -107,12 +109,38 @@ def resolve(name) -> str:
     return name if name in THEMES else DEFAULT_THEME
 
 
+def _arrow(direction: str, color: str) -> str:
+    """Path (forward slashes, for a stylesheet ``url()``) of a small triangle SVG.
+
+    Qt stylesheets do not draw the CSS "zero-size box with one coloured border" triangle:
+    they paint the box, so the spin-box steppers and menu indicators showed as two identical
+    squares. Qt does load images, so each arrow is a tiny SVG written once per colour into
+    the temp folder (rebuilt on demand, so a cleaned temp folder costs nothing)."""
+    import os
+    import tempfile
+    pts = {"up": "1,7 5,2 9,7", "down": "1,3 5,8 9,3"}[direction]
+    folder = os.path.join(tempfile.gettempdir(), "gottlux_qss")
+    path = os.path.join(folder, f"{direction}_{color.lstrip('#')}.svg")
+    if not os.path.exists(path):
+        try:
+            os.makedirs(folder, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">'
+                        f'<polygon points="{pts}" fill="{color}"/></svg>')
+        except OSError:
+            return ""
+    return path.replace("\\", "/")
+
+
 def build_stylesheet(name: str = DEFAULT_THEME) -> str:
-    """The whole Qt stylesheet for theme *name* (pure — nothing is applied or stored)."""
+    """The whole Qt stylesheet for theme *name* (nothing is applied or stored, apart from the
+    arrow images :func:`_arrow` caches in the temp folder)."""
     p = THEMES[resolve(name)]
     bg, bg2, panel, fg, muted = p["BG"], p["BG2"], p["PANEL"], p["FG"], p["MUTED"]
     accent, hover, border = p["ACCENT"], p["ACCENT_HOVER"], p["BORDER"]
     accent_text = p["ACCENT_TEXT"]
+    up, down, up_off, down_off, menu = (_arrow("up", fg), _arrow("down", fg), _arrow("up", muted),
+                                        _arrow("down", muted), _arrow("down", muted))
     return f"""
 QWidget {{ background: {bg}; color: {fg}; font-size: 12px;
            font-family: {FONT_STACK};
@@ -135,8 +163,8 @@ QPushButton#primary {{ background: {accent}; color: {accent_text}; font-weight: 
 QPushButton#primary:hover {{ background: {hover}; }}
 QPushButton:disabled {{ color: {muted}; border-color: {bg2}; }}
 /* Tool buttons match the push-button look (they host the painted vector icons — see
-   icons.py). The ::menu-indicator is the ONE native dropdown arrow for every menu button,
-   drawn from borders like the spin arrows below — no more hand-rolled "▾" in labels. */
+   icons.py). The ::menu-indicator is the ONE dropdown arrow for every menu button, a
+   small SVG like the spin arrows below (see _arrow) — no hand-rolled "▾" in labels. */
 QToolButton {{ background: {panel}; border: 1px solid {border}; border-radius: 5px;
                padding: 4px 8px; }}
 QToolButton:hover {{ border-color: {accent}; }}
@@ -146,9 +174,7 @@ QToolButton:disabled {{ color: {muted}; border-color: {bg2}; }}
 QToolButton[popupMode="1"], QToolButton[popupMode="2"],
 QToolButton[popupMode="MenuButtonPopup"], QToolButton[popupMode="InstantPopup"] {{
     padding-right: 18px; }}
-QToolButton::menu-indicator {{ width: 0; height: 0;
-    border-left: 4px solid transparent; border-right: 4px solid transparent;
-    border-top: 5px solid {muted};
+QToolButton::menu-indicator {{ image: url({menu}); width: 9px; height: 9px;
     subcontrol-origin: padding; subcontrol-position: center right; right: 5px; }}
 QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {{
     background: {panel}; border: 1px solid {border}; border-radius: 4px; padding: 3px 6px; }}
@@ -157,7 +183,7 @@ QComboBox QAbstractItemView {{ background: {panel}; border: 1px solid {border};
                                selection-background-color: {accent}; }}
 /* Spin-box step buttons. Qt requires these to be styled explicitly once the box itself is
    styled, otherwise the UP button collapses to a zero hit-area (clicks do nothing). Both
-   buttons get a real width, a divider, and a triangle arrow drawn from borders. */
+   buttons get a real width, a divider, and a triangle arrow image. */
 QSpinBox, QDoubleSpinBox {{ padding-right: 20px; }}
 QSpinBox::up-button, QDoubleSpinBox::up-button {{
     subcontrol-origin: border; subcontrol-position: top right; width: 17px;
@@ -171,14 +197,10 @@ QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
 QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {{ background: {accent}; }}
 QSpinBox::up-button:pressed, QDoubleSpinBox::up-button:pressed,
 QSpinBox::down-button:pressed, QDoubleSpinBox::down-button:pressed {{ background: {bg2}; }}
-QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{ width: 0; height: 0;
-    border-left: 4px solid transparent; border-right: 4px solid transparent;
-    border-bottom: 6px solid {fg}; }}
-QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{ width: 0; height: 0;
-    border-left: 4px solid transparent; border-right: 4px solid transparent;
-    border-top: 6px solid {fg}; }}
-QSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:disabled {{ border-bottom-color: {muted}; }}
-QSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:disabled {{ border-top-color: {muted}; }}
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{ image: url({up}); width: 9px; height: 9px; }}
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{ image: url({down}); width: 9px; height: 9px; }}
+QSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:disabled {{ image: url({up_off}); }}
+QSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:disabled {{ image: url({down_off}); }}
 QSlider::groove:horizontal {{ height: 4px; background: {border}; border-radius: 2px; }}
 QSlider::handle:horizontal {{ background: {accent}; width: 14px; margin: -6px 0;
                               border-radius: 7px; }}
@@ -269,13 +291,14 @@ def load_theme(name=None) -> str:
     **in place** so every paint-time reader (``style.FG`` …) sees the new values at once.
     *name* defaults to the persisted choice. Returns the theme actually loaded.
     """
-    global STYLESHEET, THEME, PREVIOUS_BG
+    global STYLESHEET, THEME, PREVIOUS_BG, PREVIOUS_FG
     name = resolve(current_theme() if name is None else name)
     palette = THEMES[name]
     missing = [k for k in PALETTE_KEYS if k not in palette]
     if missing:                            # pragma: no cover — guards a mistyped theme
         raise KeyError(f"theme {name!r} is missing colour role(s): {', '.join(missing)}")
     PREVIOUS_BG = BG or palette["BG"]
+    PREVIOUS_FG = FG or palette["FG"]
     globals().update({k: palette[k] for k in PALETTE_KEYS})
     STYLESHEET = build_stylesheet(name)
     THEME = name
@@ -380,6 +403,35 @@ def restyle_plots(root, previous_bg=None) -> None:
     for w in root.findChildren(pg.GraphicsView):
         if w.backgroundBrush().color().name() == old:
             w.setBackground(BG)
+    _reink_axes(root, pg)
+
+
+def _reink_axes(root, pg) -> None:
+    """Re-colour axis lines, tick labels, axis labels and plot titles that still carry the
+    outgoing theme's foreground. pyqtgraph bakes ``foreground`` into each AxisItem when it is
+    built, so after dark → light the ticks and titles stayed light grey on a light canvas
+    (nearly invisible in the Fusion lab and the workbench spectrum). Items given their own
+    colour are left alone."""
+    old_fg = QtGui.QColor(PREVIOUS_FG).name() if PREVIOUS_FG else None
+    if not old_fg:
+        return
+    for gv in root.findChildren(pg.GraphicsView):
+        scene = gv.scene()
+        if scene is None:
+            continue
+        for item in scene.items():
+            if isinstance(item, pg.AxisItem):
+                if item.pen().color().name() == old_fg:
+                    item.setPen(FG)
+                if item.textPen().color().name() == old_fg:
+                    item.setTextPen(FG)
+                if item.labelStyle.get("color") in (None, PREVIOUS_FG, old_fg):
+                    item.labelStyle["color"] = FG
+                    item._updateLabel()
+            elif isinstance(item, pg.PlotItem):
+                title = item.titleLabel
+                if title.opts.get("color") in (None, PREVIOUS_FG, old_fg) and title.text:
+                    title.setText(title.text, color=FG)
 
 
 def refresh_window(win) -> None:

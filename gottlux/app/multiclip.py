@@ -448,6 +448,8 @@ class MultiClipViewer(QtWidgets.QWidget):
             "function; they share one clock, so they scrub and accumulate together. Give a clip a "
             "slate Offset to line it up. Press Play to run it (loops by default).")
         self.hint.setAlignment(QtCore.Qt.AlignCenter); self.hint.setObjectName("muted")
+        # wrap: unwrapped, this one sentence set a 1527 px minimum width for the whole window
+        self.hint.setWordWrap(True)
         self.container_lay.addWidget(self.hint)
 
         # --- Overlay layout: one image blending every clip's events in distinct colours ---
