@@ -59,6 +59,40 @@ All notable changes to GottLUX are documented here. The project follows
 
 ### Fixed
 
+Audit of 2026-10-18; each item is tracked in [`docs/ISSUES.md`](docs/ISSUES.md) (GL-01…25).
+
+- **Preset detectors ran at the drone band in headless runs** (GL-01). `hummingbird`,
+  `insect`, `mosquito` and `bird` were given `freq_lo/freq_hi/snr` overrides of 80–800 Hz /
+  SNR 4 on every call, so their own signature band never applied. A run now adopts the
+  preset's band unless `--freq_lo/--freq_hi/--snr` were given (`adopt_signature_band`).
+- **`--out` was ignored** (GL-02): run folders now land under `Config.output_root`.
+- **The main window could not be smaller than 1549 × 1038 px** (GL-03), so on laptop and
+  scaled 1080p screens the bottom of every tab was off-screen. The EBS viewer's controls
+  scroll, the Multi-clip hint wraps, and the density strip no longer pins a minimum width:
+  1156 × 665 now.
+- `--assume_spin` now applies to every analysis and `--plots` figure, not only the rotation
+  analyses (GL-16).
+- Plots: flicker-map opacity starts at the noise floor, so noise cells no longer cover the
+  target (GL-07); the spectrogram covers the whole clip on the recording's clock (GL-08);
+  event-rate traces no longer dip in the last bin (GL-09); the panorama has one elevation bin
+  per sensor row, which removes the striping (GL-14); the radar shares one colour scale
+  (GL-15); overlay, tracks, flicker-map and spectrum labels no longer collide (GL-10…13).
+- GUI: spin-box and menu arrows draw as arrows instead of squares (GL-05); a light/dark
+  switch re-inks plot axes and titles (GL-06); the EBS viewer's density strip spans its
+  width (GL-04), playback keeps the requested frame rate (GL-17), and the viewer opens on a
+  frame with events in it (GL-18), without a blank band (GL-19) or a dark strip in the light
+  theme (GL-20).
+- Panorama box labels: a sidecar that cannot be written now warns instead of losing the
+  labels, an unreadable sidecar is kept as `*.unreadable-<epoch>`, saves are atomic, and a
+  box reaching 360° no longer draws a stray edge at 0° (GL-23, GL-24).
+
+### Added (examples)
+
+- `examples/hummingbird_gallery.py` renders the hummingbird fight: a light painting, a
+  space-time event cloud, an event stroboscope (events folded by wingbeat phase, f0 = 71.6 Hz
+  during the hover), a tracked-box wingbeat spectrogram, an 11× slow-motion video and an
+  orbit of the space-time cloud.
+
 - **Opening the Event-rate tower killed the application on matplotlib 3.11.** Colormaps
   were looked up through `matplotlib.cm.get_cmap`, which that release removed. The tower's
   colour key resolves its colormap from inside a Qt `paintEvent`, and an exception escaping
