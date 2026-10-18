@@ -34,7 +34,7 @@ from gottlux.app.splash import BootSplash
 class MainWindow(QtWidgets.QMainWindow):
     _TAB_NAMES = ("Live viewer", "Multi-clip", "Range lab", "Event-rate tower",
                   "Space-time 3D", "Flutter workbench", "Sandbox", "EBS viewer", "Fusion lab",
-                  "Timeline")
+                  "Timeline", "Studio")
 
     def __init__(self, on_progress=None):
         super().__init__()
@@ -59,6 +59,7 @@ class MainWindow(QtWidgets.QMainWindow):
         from gottlux.app.rangelab import RangeLab
         from gottlux.app.sandbox import Sandbox
         from gottlux.app.spacetime import SpaceTimeView
+        from gottlux.app.studio import StudioPanel
         from gottlux.app.timeline import TimelineEditor
         from gottlux.app.tower import EventRateTower
         from gottlux.app.transport import TimeController
@@ -94,9 +95,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.fusionlab = FusionLab(self.clock, self.filters)
         progress(0.86, "Building Timeline editor…")
         self.timeline = TimelineEditor()      # its own clock; painted lanes, no pyqtgraph/OpenGL
+        progress(0.865, "Building Studio…")
+        self.studio = StudioPanel(self.clock, self.filters)   # looks → GIF / MP4 shots
         self.panels = (self.viewer, self.multiclip, self.rangelab, self.tower,
                        self.spacetime, self.workbench, self.sandbox, self.ebsviewer,
-                       self.fusionlab, self.timeline)
+                       self.fusionlab, self.timeline, self.studio)
         progress(0.87, "Assembling workspace…")
         self.tabs = self._make_tabs()
         self._compare_panels = None        # built lazily when the user splits the view
@@ -634,6 +637,7 @@ class MainWindow(QtWidgets.QMainWindow):
         from gottlux.app.rangelab import RangeLab
         from gottlux.app.sandbox import Sandbox
         from gottlux.app.spacetime import SpaceTimeView
+        from gottlux.app.studio import StudioPanel
         from gottlux.app.timeline import TimelineEditor
         from gottlux.app.tower import EventRateTower
         from gottlux.app.viewer import LiveViewer
@@ -648,9 +652,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ebsviewer2 = EBSViewer()
         self.fusionlab2 = FusionLab(self.clock, self.filters)
         self.timeline2 = TimelineEditor()
+        self.studio2 = StudioPanel(self.clock, self.filters)
         self._compare_panels = (self.viewer2, self.multiclip2, self.rangelab2, self.tower2,
                                 self.spacetime2, self.workbench2, self.sandbox2, self.ebsviewer2,
-                                self.fusionlab2, self.timeline2)
+                                self.fusionlab2, self.timeline2, self.studio2)
         self.tabs2 = self._make_tabs(self._compare_panels)
         self.tabs2.setCurrentIndex(3)        # default the right pane to a different view
         # every clock, as for the main tabs: the compare pane's Multi-clip has its own

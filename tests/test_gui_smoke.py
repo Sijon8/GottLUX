@@ -41,9 +41,9 @@ def test_main_window_has_all_tabs(app):
     for expected in ("Live viewer", "Multi-clip", "Event-rate tower",
                      "Space-time 3D", "Flutter workbench", "Sandbox", "Timeline"):
         assert expected in names, f"{expected} tab missing; have {names}"
-    # the full declared order, ending on the Timeline (compose/export) tab
+    # the full declared order, ending on the compose/export tabs (Timeline, then Studio)
     assert names == list(MainWindow._TAB_NAMES)
-    assert len(names) == 10 and names[-1] == "Timeline"
+    assert len(names) == 11 and names[-2:] == ["Timeline", "Studio"]
 
 
 def test_fusion_lab_tab_present(app):
