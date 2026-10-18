@@ -64,6 +64,7 @@ gottlux = "gottlux.cli:main"
 gottlux-gui = "gottlux.app.main:main"
 gottlux-view = "gottlux.app.quickview:main"
 gottlux-calibrate = "gottlux.run.calibrate:main"
+gottlux-studio = "gottlux.studio.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/Sijon8/GottLUX"
