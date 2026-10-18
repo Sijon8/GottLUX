@@ -10,6 +10,37 @@ import pytest
 from gottlux.synthetic import FlutterTarget, synthetic_scene
 
 
+@pytest.fixture(autouse=True)
+def _free_qt_objects_on_the_gui_thread():
+    """After each test, delete the Qt objects it left behind — on the GUI thread.
+
+    Windows and panels a test drops often sit in reference cycles (signal lambdas holding
+    ``self``), so CPython frees them only at its next cyclic garbage collection — which can run
+    on *any* thread that happens to allocate. When that is a later test's worker thread (the
+    screen recorder's encoder, an export worker), Qt destructors run off the GUI thread and the
+    process dies with an access violation / abort: the intermittent abort of the full suite
+    (docs/ISSUES.md GL-26)."""
+    yield
+    import gc
+    import sys
+    widgets = sys.modules.get("PySide6.QtWidgets")
+    app = widgets.QApplication.instance() if widgets else None
+    if app is None:
+        return
+    app.processEvents()                       # run pending deleteLater()s
+    gc.collect()                              # free cyclic Qt wrappers here, on the GUI thread
+    app.processEvents()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Let a decode a GUI test left running finish before the interpreter exits: a running
+    QThread torn down at exit aborts the process (gottlux.app.loader.Worker)."""
+    import sys
+    loader = sys.modules.get("gottlux.app.loader")
+    if loader is not None:
+        loader.wait_for_workers(timeout_s=120)
+
+
 @pytest.fixture(scope="session")
 def flutter_rec():
     """A 1.5 s scene with one planted 200 Hz target crossing the centre + noise + clutter."""

@@ -815,6 +815,10 @@ def main(argv=None):
     load_plugins()
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(argv)
+    # cyclic garbage is collected on this (GUI) thread only — a collection on a worker
+    # thread would run Qt destructors there and crash (gottlux.app.gcguard)
+    from gottlux.app import gcguard
+    gcguard.install()
     app.setOrganizationName("GottLUX")        # so QSettings (welcome opt-out) has a home
     app.setApplicationName("gottlux")
     # Adopt the persisted light/dark palette before anything paints — this touches only the
@@ -840,7 +844,13 @@ def main(argv=None):
         QtCore.QTimer.singleShot(150, lambda: win.load(path))
     else:
         QtCore.QTimer.singleShot(200, win.maybe_show_welcome)
-    return app.exec()
+    rc = app.exec()
+    # a decode or detector run still in flight finishes before Python exits: a running
+    # QThread torn down at exit aborts the process (gottlux.app.loader.Worker)
+    loader = sys.modules.get("gottlux.app.loader")
+    if loader is not None:
+        loader.wait_for_workers()
+    return rc
 
 
 if __name__ == "__main__":

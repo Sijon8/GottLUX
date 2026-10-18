@@ -532,6 +532,10 @@ def main(argv=None):
         return 0 if ok else 1
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(argv)
+    # cyclic garbage is collected on this (GUI) thread only — a collection on a worker
+    # thread would run Qt destructors there and crash (gottlux.app.gcguard)
+    from gottlux.app import gcguard
+    gcguard.install()
     path = _first_path(argv)
     # Single-instance fast path: an open viewer takes the file; we exit before the heavy imports.
     if path and os.path.exists(path) and _forward_if_running(path):
@@ -550,7 +554,17 @@ def main(argv=None):
         QtCore.QTimer.singleShot(80, lambda: win.load(path))
     else:
         QtCore.QTimer.singleShot(0, win.open_file_dialog)
-    return app.exec()
+    rc = app.exec()
+    _finish_workers()
+    return rc
+
+
+def _finish_workers():
+    """The window is gone; let a decode still in flight finish before Python exits (a
+    running QThread torn down at exit aborts the process — gottlux.app.loader.Worker)."""
+    loader = sys.modules.get("gottlux.app.loader")
+    if loader is not None:
+        loader.wait_for_workers()
 
 
 if __name__ == "__main__":

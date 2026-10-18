@@ -167,3 +167,40 @@ def test_quickview_opens_large_file_as_samples(raw, monkeypatch, tmp_path):
     assert wait(lambda: win.rec is not None and not getattr(win.rec, "is_preview", False))
     assert win.decode_btn.isHidden()
     win.close()
+
+
+def test_worker_outlives_its_owner_and_is_waited_for():
+    QtCore = pytest.importorskip("PySide6.QtCore")
+    import gc
+    import weakref
+    from gottlux.app import loader
+
+    class Slow(loader.Worker):
+        def run(self):
+            time.sleep(0.4)
+
+    w = Slow()
+    w.start()
+    ref = weakref.ref(w)
+    del w                                          # the owner lets go mid-run
+    gc.collect()                                   # Qt would abort if it were destroyed now
+    assert ref() is not None and ref() in loader._RUNNING and ref().isRunning()
+    assert loader.wait_for_workers(timeout_s=10)
+    assert not loader._RUNNING
+    QtCore.QCoreApplication.processEvents()
+
+
+def test_gcguard_moves_cyclic_collection_to_the_gui_thread():
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    pytest.importorskip("pyqtgraph")
+    import gc
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    from gottlux.app import gcguard
+    try:
+        g = gcguard.install()
+        assert gcguard.install() is g                 # idempotent
+        assert not gc.isenabled() and g.timer.isActive()
+    finally:
+        gcguard.uninstall()
+    assert gc.isenabled()
+    app.processEvents()

@@ -82,6 +82,18 @@ Audit of 2026-10-18; each item is tracked in [`docs/ISSUES.md`](docs/ISSUES.md) 
   width (GL-04), playback keeps the requested frame rate (GL-17), and the viewer opens on a
   frame with events in it (GL-18), without a blank band (GL-19) or a dark strip in the light
   theme (GL-20).
+- **Crash when Python's garbage collector ran on a worker thread** (GL-26). Cyclic
+  garbage that includes Qt objects (dropped windows and panels) was freed in whichever thread
+  allocated next — the screen recorder's encoder, the Studio export, a decode or sampling
+  loader — running Qt destructors off the GUI thread: an access violation or abort, now and
+  then in the test suite. `gottlux-gui` and `gottlux-view` now collect cycles on a GUI-thread
+  timer (`gottlux.app.gcguard`), and the tests free each test's Qt objects on the GUI thread.
+- **Crash when a window closed, or the app quit, while a decode was running** (GL-40):
+  `QThread: Destroyed while thread is still running`. Loader threads now stay referenced
+  until they finish, and the apps wait for a running decode at exit (it completes its cache).
+- **CI aborted on Python 3.10/3.11 at interpreter shutdown** (GL-39): PySide6 6.12.0's Linux
+  wheels drop references to `True`/`None` (PYSIDE-3477). That release is excluded
+  (`PySide6>=6.6,!=6.12.0`); Python 3.12+ was never affected.
 - **`estimate_spin_period_s` could hang** (GL-35): the pass scan stopped advancing when a
   window's maximum was its left edge; `--assume_spin auto` hung on such recordings. Passes
   are now also timed by their centroid rather than their argmax (GL-36: ~2 % → ≤1 % on

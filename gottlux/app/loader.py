@@ -14,6 +14,12 @@ Recording that the GUI swaps in seamlessly. Small files and cache hits skip the 
 
 A second worker, :class:`DetectorWorker`, runs a detector off-thread the same way, so tuning
 sweeps stay responsive.
+
+Every worker here is a :class:`Worker`: once started it stays referenced until it finishes,
+and :func:`wait_for_workers` lets an application wait for the rest when its event loop ends.
+Qt aborts the whole process ("QThread: Destroyed while thread is still running") if a running
+thread is deleted — when the window that started a decode is closed and collected, or when
+the application exits with a decode in flight.
 """
 from __future__ import annotations
 
@@ -21,8 +27,37 @@ from PySide6 import QtCore
 
 import gottlux as eb
 
+_RUNNING: set = set()          # started workers that have not finished yet
 
-class RecordingLoader(QtCore.QThread):
+
+class Worker(QtCore.QThread):
+    """A QThread that cannot be destroyed while it runs (see the module docstring)."""
+
+    def start(self, *args):
+        _RUNNING.add(self)
+        self.finished.connect(self._forget)
+        super().start(*args)
+
+    def _forget(self):
+        _RUNNING.discard(self)
+
+
+def wait_for_workers(timeout_s=None) -> bool:
+    """Block until every started worker has finished; call it once the event loop is over.
+    A decode cannot be cancelled midway, so this waits for it (it completes its cache).
+    Returns False if *timeout_s* ran out first."""
+    import time
+    end = None if timeout_s is None else time.monotonic() + timeout_s
+    for w in list(_RUNNING):
+        if end is None:
+            w.wait()
+        elif not w.wait(max(0, int((end - time.monotonic()) * 1000))):
+            return False
+        _RUNNING.discard(w)
+    return True
+
+
+class RecordingLoader(Worker):
     progress = QtCore.Signal(float)          # 0..1
     preview = QtCore.Signal(object)          # PreviewRecording (large uncached .raw only)
     loaded = QtCore.Signal(object)           # Recording
@@ -52,7 +87,7 @@ class RecordingLoader(QtCore.QThread):
             self.failed.emit(f"{e}\n\n{traceback.format_exc()}")
 
 
-class SampledLoader(QtCore.QThread):
+class SampledLoader(Worker):
     """The quick viewer's large-file open: decode byte samples only
     (:func:`gottlux.io.preview.sample_recording` — the first, middle and last chunk), no
     whole-file pass and no automatic full decode. ``preview`` fires twice: once the first
@@ -86,7 +121,7 @@ class SampledLoader(QtCore.QThread):
             self.failed.emit(f"{e}\n\n{traceback.format_exc()}")
 
 
-class PreviewPrefetcher(QtCore.QThread):
+class PreviewPrefetcher(Worker):
     """Decode an un-covered span of a :class:`~gottlux.io.preview.PreviewRecording` off the
     GUI thread — the seek-into-a-gap path of the sampled preview.
 
@@ -110,7 +145,7 @@ class PreviewPrefetcher(QtCore.QThread):
             self.done.emit()
 
 
-class DetectorWorker(QtCore.QThread):
+class DetectorWorker(Worker):
     progress = QtCore.Signal(float)
     done = QtCore.Signal(object)             # DetectorResult
     failed = QtCore.Signal(str)

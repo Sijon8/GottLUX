@@ -42,7 +42,10 @@ dependencies = [
 [project.optional-dependencies]
 # The high-performance interactive stack (installed by default in this project).
 # PyOpenGL is a hard requirement of the 3-D space-time and event-rate tower tabs.
-gui = ["PySide6>=6.6", "pyqtgraph>=0.13", "PyOpenGL>=3.1"]
+# PySide6 6.12.0's x86-64 Linux wheels drop a reference to True/None on every signal
+# emit and every call that returns nothing; Python 3.10/3.11 then abort ("bool_dealloc",
+# PYSIDE-3477). Python 3.12+ is unaffected (immortal singletons); see docs/ISSUES.md GL-39.
+gui = ["PySide6>=6.6,!=6.12.0", "pyqtgraph>=0.13", "PyOpenGL>=3.1"]
 fast = ["numba>=0.60"]
 # 'data' covers plain HDF5 read/write (h5py). The 'hdf5' extra adds hdf5plugin —
 # a large wheel (opt-in, NOT in data/all) registering the common generic codecs.
@@ -55,7 +58,7 @@ hdf5 = ["h5py>=3.10", "hdf5plugin>=4.0"]
 dev = ["pytest>=7.0", "pytest-cov", "pytest-timeout", "ruff",
        "pytest-github-actions-annotate-failures"]
 all = [
-    "PySide6>=6.6", "pyqtgraph>=0.13", "PyOpenGL>=3.1", "numba>=0.60",
+    "PySide6>=6.6,!=6.12.0", "pyqtgraph>=0.13", "PyOpenGL>=3.1", "numba>=0.60",
     "pandas>=2.0", "pyarrow>=14", "scikit-image>=0.22", "h5py>=3.10",
 ]
 
