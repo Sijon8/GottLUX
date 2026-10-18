@@ -90,7 +90,7 @@ def estimate_spin_period_s(t_events_s, *, bin_s: float = 0.005, lo_s: float = 0.
     # refine via the per-revolution rate peaks (passes): find local maxima > 60th pct, ~1 per period
     thr = np.percentile(rate, 90)
     centers = 0.5 * (edges[:-1] + edges[1:])
-    peaks = []
+    peaks, times = [], []
     guard = max(int(round(0.4 * seed / bin_s)), 1)
     i = 0
     while i < rate.size:
@@ -99,12 +99,19 @@ def estimate_spin_period_s(t_events_s, *, bin_s: float = 0.005, lo_s: float = 0.
             pk = j0 + int(np.argmax(rate[j0:j1]))
             if not peaks or (pk - peaks[-1]) > guard:
                 peaks.append(pk)
-            i = pk + guard
+                # time the pass by its rate-weighted centroid above the threshold: the argmax
+                # of a flat-topped pass lands anywhere on the top (a ~2 % period error)
+                w = np.clip(rate[j0:j1] - thr, 0, None)
+                times.append(float((centers[j0:j1] * w).sum() / w.sum()) if w.sum() > 0
+                             else float(centers[pk]))
+            # always advance: when the window's maximum is its left edge (pk = i - guard),
+            # pk + guard == i and the scan looped forever
+            i = max(pk + guard, i + 1)
         else:
             i += 1
     period = seed
     if len(peaks) >= 3:
-        tp = centers[np.array(peaks)]
+        tp = np.asarray(times)
         idx = np.round((tp - tp[0]) / seed).astype(int)        # assign each peak a rev index
         if len(set(idx)) >= 3:
             slope = np.polyfit(idx, tp, 1)[0]

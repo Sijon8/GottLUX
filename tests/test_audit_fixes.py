@@ -125,7 +125,12 @@ def app():
 
 
 def test_main_window_fits_a_laptop_screen(app):
+    from PySide6 import QtGui
+
     from gottlux.app.main import MainWindow
+    if not QtGui.QFontDatabase.families():
+        # offscreen Qt with no font directory draws tofu boxes: text widths are meaningless
+        pytest.skip("no fonts available to Qt (set QT_QPA_FONTDIR)")
     win = MainWindow()
     hint = win.minimumSizeHint()
     assert hint.height() <= 720, hint            # was 963-1038 px: taller than the screen
@@ -161,3 +166,17 @@ def test_unreadable_sidecar_is_kept(app, tmp_path):
     v = EBSViewer()
     v._load_annotations(str(raw))
     assert list(tmp_path.glob("clip_annotations.json.unreadable-*"))
+
+
+@pytest.mark.timeout(60)
+def test_spin_period_estimate_terminates():
+    """GL-35: the pass-peak scan stalled when a window's maximum sat at its left edge."""
+    from gottlux.io.telemetry import estimate_spin_period_s
+    rate = np.zeros(1000)
+    for k in range(8):                      # passes every 0.5 s (5 ms bins): a plateau wider
+        c = 100 + k * 100                   # than the 0.4-period guard whose maximum is its
+        rate[c + 1:c + 60] = 50             # first bin — the scan's next window starts on it
+        rate[c] = 51
+    t = np.repeat(np.arange(rate.size) * 0.005, rate.astype(int))
+    period, conf = estimate_spin_period_s(t)
+    assert period is not None and abs(period - 0.5) < 0.01
