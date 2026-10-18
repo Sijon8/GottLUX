@@ -148,6 +148,11 @@ def export_shot(rec, shot: Shot, path: str | None = None, *, renderer=None, prog
              "span_s": [r.t0, r.t1], **extra}
     if "f0" in r.st:
         facts["f0_hz"] = float(r.st["f0"])
+    from gottlux.run.export_provenance import partial_note
+    note = partial_note(rec)                  # a sampled / preview recording: say so
+    facts["source_decode"] = "partial" if note else "full"
+    if note:
+        facts["source_note"] = note
     recipe = os.path.abspath(path) + ".shot.json"
     from gottlux import __version__
     # the recipe sits beside its file, so it names the file, not where this machine keeps it

@@ -162,19 +162,34 @@ def source_facts(path, rec=None, sha256=True) -> dict:
     Degrades rather than raises: an in-memory recording records the fact that it has no
     file, a missing path records the path and says so, and a file with no decode cache
     records its header facts and notes that the event count would have cost a full decode.
+
+    A recording that is only **partly decoded** (the sampled preview of a large file, or the
+    quick viewer's byte samples) records ``decoded="partial"``, ``events_decoded``, the
+    decoded ``coverage_s`` spans and, for byte samples, a ``sampled`` description; its
+    ``events`` stay the *file's* count (from a decode cache when there is one, else unknown)
+    rather than the number of events that happened to be decoded.
     """
     if rec is None and hasattr(path, "source_path"):      # a Recording answers for itself
         rec, path = path, getattr(path, "source_path", "")
     facts = {"path": None, "directory": None, "name": None, "label": None,
              "bytes": None, "size": None, "sha256": None, "format": None,
              "width": None, "height": None, "events": None, "duration_s": None,
-             "available": False, "facts_from": None, "note": None}
+             "available": False, "facts_from": None, "note": None,
+             "decoded": None}
     if rec is not None:
         facts.update(label=str(getattr(rec, "name", "") or "") or None,
                      format=getattr(rec, "fmt", None),
                      width=int(rec.width), height=int(rec.height), events=int(rec.n),
                      duration_s=round(float(rec.duration_s), 6),
-                     facts_from="loaded recording")
+                     facts_from="loaded recording", decoded="full")
+        if getattr(rec, "is_preview", False):     # partly decoded: say so, count the file
+            cov = [(round(a, 6), round(b, 6)) for a, b in getattr(rec, "coverage", [])]
+            facts.update(events=None, events_decoded=int(rec.n), decoded="partial",
+                         coverage_s=cov, facts_from="partly decoded view of the recording",
+                         note=("exported from a partly decoded view — only the decoded "
+                               "spans (coverage_s) contributed events"))
+            if hasattr(rec, "describe"):
+                facts["sampled"] = rec.describe()
     path = str(path or "")
     if not path:
         facts["label"] = facts["label"] or "(in-memory recording)"
@@ -217,6 +232,17 @@ def source_facts(path, rec=None, sha256=True) -> dict:
         facts["note"] = ("event count and duration not read — this file has no decode "
                          "cache, and reading them would have forced a full decode")
     return facts
+
+
+def partial_note(rec) -> str | None:
+    """A one-line warning for a partly decoded recording (``None`` for a full one), for
+    export READMEs and recipe files."""
+    if not getattr(rec, "is_preview", False):
+        return None
+    spans = ", ".join(f"{a:.2f}–{b:.2f} s" for a, b in getattr(rec, "coverage", []))
+    what = rec.describe() if hasattr(rec, "describe") else "sampled preview"
+    return (f"made from a partly decoded view ({what}); decoded spans: {spans or 'none'} — "
+            "moments outside them had no events")
 
 
 def artifact_facts(path, **fields) -> dict:
@@ -441,6 +467,12 @@ def _readme_sources(lines, sources):
         lines.append(f"   * SHA-256: `{s.get('sha256') or 'not computed'}`")
         if s.get("facts_from"):
             lines.append(f"   * Geometry/count read from: {s['facts_from']}")
+        if s.get("decoded") == "partial":
+            spans = ", ".join(f"{a:g}–{b:g} s" for a, b in s.get("coverage_s") or [])
+            what = s.get("sampled") or "sampled preview"
+            lines.append(f"   * **Partly decoded when exported**: {what}; "
+                         f"{s.get('events_decoded', 0):,} events decoded; "
+                         f"spans {spans or '—'}")
         if s.get("note"):
             lines.append(f"   * Note: {s['note']}")
     lines.append("")
