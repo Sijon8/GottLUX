@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GottLUX Studio — event-camera GIFs &amp; clips</title>
+<meta name="description" content="Turn event-camera recordings into short GIF / MP4 shots in the browser: polarity trails, time surfaces, light painting, 3-D space-time orbits, an event stroboscope and more. Fully client-side.">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%2305080b'/%3E%3Ccircle cx='8' cy='8' r='5' fill='none' stroke='%2339c5cf' stroke-width='1.6'/%3E%3Ccircle cx='8' cy='8' r='1.7' fill='%2339c5cf'/%3E%3C/svg%3E">
+</head>
+<body class="studio">
+
+<header>
+  <h1>Gott<span class="lux">Lux</span> Studio</h1>
+  <span class="tagline">Pick a look, frame the shot, export a GIF or a clip — all in this tab.</span>
+  <nav>
+    <a href="index.html">Viewer</a>
+    <a href="studio.html" aria-current="page">Studio</a>
+    <a href="https://github.com/Sijon8/GottLUX/blob/main/docs/STUDIO.md" target="_blank" rel="noopener">How the looks work</a>
+    <a href="https://github.com/Sijon8/GottLUX" target="_blank" rel="noopener">GitHub</a>
+  </nav>
+</header>
+
+<main>
+  <aside id="sidebar">
+    <section class="panel" id="clips-panel">
+      <h2>Sample clips</h2>
+      <div id="clip-list"></div>
+      <div id="manifest-note">Loading clip manifest…</div>
+    </section>
+    <div id="dropzone" title="Open a local Prophesee .raw file">
+      <strong>Drop a Prophesee .raw here</strong>
+      or click to browse (EVT2.0 / EVT2.1 / EVT3)
+      <div class="privacy">Decoded and rendered entirely in this tab — nothing is uploaded.</div>
+      <input type="file" id="file-input" accept=".raw">
+    </div>
+    <section class="panel" id="recipes-panel">
+      <h2>Quick recipes</h2>
+      <div id="recipe-list" class="recipe-list"></div>
+    </section>
+  </aside>
+
+  <section id="stage">
+    <div id="studio-view">
+      <canvas id="preview" width="480" height="360"></canvas>
+      <canvas id="crop-overlay" width="480" height="360" hidden></canvas>
+      <div id="view-hint">Pick a sample clip or drop a .raw file, then choose a look.</div>
+      <div id="load-overlay" class="hidden">
+        <div id="load-stage">loading…</div>
+        <div class="bar"><div id="load-bar"></div></div>
+      </div>
+    </div>
+    <div class="panel" id="transport">
+      <div class="group">
+        <button id="btn-play" disabled>Pause</button>
+        <input type="range" id="frame" min="0" max="0" value="0" aria-label="Frame">
+      </div>
+      <div class="group">
+        <button id="btn-crop" disabled title="Show the whole sensor and drag a box around the subject">Crop</button>
+        <button id="btn-full" disabled title="Remove the crop">Full frame</button>
+      </div>
+      <span class="readout" id="readout">—</span>
+    </div>
+    <canvas id="span-strip" title="Event rate — drag to choose the shot's span"></canvas>
+    <div class="hint mono" id="span-readout">drag on the strip to choose the span</div>
+  </section>
+
+  <aside id="deck">
+    <section class="panel">
+      <h2>Look</h2>
+      <select id="look"></select>
+      <p class="look-desc" id="look-desc"></p>
+      <div id="params" class="form"></div>
+    </section>
+    <section class="panel">
+      <h2>Shot</h2>
+      <div class="form">
+        <label>Span <span class="pair"><input type="number" id="t0" step="0.01" min="0"> → <input type="number" id="t1" step="0.01" min="0"> s</span></label>
+        <label>Speed <select id="speed">
+          <option value="1">real time</option><option value="0.5">0.5×</option>
+          <option value="0.25">0.25×</option><option value="0.1" selected>0.1× (10× slower)</option>
+          <option value="0.05">0.05×</option><option value="0.02">0.02×</option>
+          <option value="0.01">0.01× (100× slower)</option></select></label>
+        <label class="check"><input type="checkbox" id="denoise" checked> Denoise (hot pixels + shot noise)</label>
+        <div class="dim small" id="crop-readout">crop: full frame</div>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Style</h2>
+      <div class="form">
+        <label>Palette <select id="palette"></select></label>
+        <label>Bloom <input type="range" id="bloom" min="0" max="2" step="0.05" value="0"><span class="val" id="bloom-v">0</span></label>
+        <label>Gamma <input type="range" id="gamma" min="0.4" max="2.5" step="0.05" value="1"><span class="val" id="gamma-v">1</span></label>
+        <label>Title <input type="text" id="title" placeholder="optional"></label>
+        <div class="checks">
+          <label class="check"><input type="checkbox" id="stamp" checked> time</label>
+          <label class="check"><input type="checkbox" id="speed_label" checked> speed</label>
+          <label class="check"><input type="checkbox" id="legend"> ON/OFF key</label>
+          <label class="check"><input type="checkbox" id="rate_strip"> rate strip</label>
+          <label class="check"><input type="checkbox" id="pingpong"> ping-pong</label>
+        </div>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Export</h2>
+      <div class="form">
+        <label>Preset <select id="preset"></select></label>
+        <label>Format <select id="format"></select></label>
+        <label>Width <input type="number" id="width" min="64" max="2048" step="16"> px</label>
+        <label>Frame rate <input type="number" id="fps" min="1" max="60" step="1"> fps</label>
+        <div class="buttons">
+          <button id="btn-export" class="primary" disabled>Export</button>
+          <button id="btn-share" disabled title="Copy a link that re-opens this exact shot">Copy link</button>
+          <button id="btn-recipe" disabled title="Download the shot recipe (JSON) — opens in the desktop Studio">Recipe</button>
+        </div>
+        <div class="bar hidden" id="export-progress"><div id="export-bar"></div></div>
+        <div id="export-result" class="small"></div>
+      </div>
+    </section>
+  </aside>
+</main>
+
+<footer>
+  <span>GottLUX Studio · MIT license</span>
+  <span>Same looks as the desktop Studio and <code>gottlux-studio</code></span>
+  <span><a href="https://github.com/Sijon8/GottLUX" target="_blank" rel="noopener">github.com/Sijon8/GottLUX</a></span>
+</footer>
+
+<script src="js/decoder.js"></script>
+<script src="js/analysis.js"></script>
+<script src="js/looks.js"></script>
+<script src="js/gifenc.js"></script>
+<script src="js/studio.js"></script>
+</body>
+</html>
