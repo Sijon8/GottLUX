@@ -1,0 +1,53 @@
+{
+  "gottlux_version": "1.0.0",
+  "rendered_utc": "2026-10-18T15:51:06+00:00",
+  "source": "Humming_Bird_Fight_merged_2.raw",
+  "shot": {
+    "source": "Humming_Bird_Fight_merged_2.raw",
+    "look": "paint",
+    "params": {},
+    "t0": 0.3,
+    "t1": 2.95,
+    "crop": [
+      0,
+      40,
+      320,
+      280
+    ],
+    "speed": 0.6,
+    "fps": 20,
+    "width": 420,
+    "palette": "fire-ice",
+    "denoise": true,
+    "baf_us": 2000.0,
+    "bloom": 0.5,
+    "gamma": 1.0,
+    "resample": "bilinear",
+    "stamp": true,
+    "speed_label": false,
+    "title": "",
+    "legend": false,
+    "rate_strip": false,
+    "pingpong": false,
+    "format": "gif",
+    "gif_colors": 96,
+    "quality": 8
+  },
+  "output": {
+    "format": "gif",
+    "frames": 88,
+    "size": [
+      420,
+      316
+    ],
+    "fps": 20.0,
+    "duration_s": 4.4,
+    "span_s": [
+      0.3,
+      2.95
+    ],
+    "fps_effective": 20.0,
+    "frame_ms": 50,
+    "file": "hb_paint.gif"
+  }
+}

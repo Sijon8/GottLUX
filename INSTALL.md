@@ -34,10 +34,11 @@ That registers four commands on the PATH:
 
 | command | what it opens |
 |---|---|
-| `gottlux-gui` | the full 10-tab interactive instrument |
+| `gottlux-gui` | the full 11-tab interactive instrument |
 | `gottlux-view file.raw` | the **lightweight quick viewer** (fast single-clip player) |
 | `gottlux file.raw` | headless analysis → a reproducible run folder |
 | `gottlux-calibrate` | range / dual-camera timing calibration utilities |
+| `gottlux-studio file.raw` | render a GIF / MP4 / WebM shot with one of the Studio looks |
 
 Smoke-test the install with the bundled sample data:
 

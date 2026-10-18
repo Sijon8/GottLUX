@@ -15,8 +15,7 @@ could not be rendered: offscreen Qt has no OpenGL, and a hidden native window ha
 Severity: **High** = wrong results or an unusable window; **Medium** = misleading output or a
 broken control; **Low** = cosmetic or minor.
 
-Each fixed item has a regression test in `tests/test_audit_fixes.py` unless noted. All 15 tests
-fail on `05f8cb0` and pass on this branch.
+Each fixed item has a regression test in `tests/test_audit_fixes.py` unless noted. All 16 fail on `05f8cb0` (the GL-35 test hangs there) and pass on this branch.
 
 ## Fixed on this branch
 
@@ -47,6 +46,8 @@ fail on `05f8cb0` and pass on this branch.
 | GL-23 | Medium | GUI (box labels, uncommitted work) | **Annotation sidecar**: a failed save was swallowed (`except: pass`), so labels made beside a read-only recording were lost silently. An unreadable sidecar was overwritten on the next save. The write was not atomic. | Reading the code. Shared data folders are often read-only. | The save writes to `.tmp` then `os.replace`, and a failure warns once. An unreadable sidecar is copied to `*.unreadable-<epoch>` before anything can overwrite it. |
 | GL-24 | Low | GUI (box labels, uncommitted work) | A box dragged to the panorama's right edge (az1 = 360°) folded to column 0 and drew a stray edge at 0°. | `_draw_label_boxes` with `az1 = 360`. | It is clamped to the last column. |
 | GL-25 | Low | GUI | The compare pane paused only the shared clock on a tab switch, so its Multi-clip clock kept running. | Reading the code. | It uses `_pause_all_clocks()`, like the main tabs. No test. |
+| GL-35 | High | Rotation | **`estimate_spin_period_s` could loop forever**, hanging `--assume_spin auto` and anything else that estimates a spin. The pass scan jumps to `pk + guard`; when the strongest sample in the window is the window's left edge (a pass wider than 0.4 periods, at or above the 90th-percentile threshold, whose maximum is its first bin), `pk + guard` is the current index and the scan never advances. | Found while building the Studio's radar look: a synthetic spinning scene hung in `telemetry.py:99`. `test_spin_period_estimate_terminates` hangs on `05f8cb0` (killed by a 20 s timeout) and passes here. | It always advances (`max(pk + guard, i + 1)`). |
+| GL-36 | Low | Rotation | The same estimator timed each pass by its argmax. On a flat-topped pass (a source crossing the field of view) the argmax lands anywhere on the top, which put the period off by about 2 %; for de-rotation that is about 7° of drift per revolution. | Synthetic 0.5 s spin: 0.5096–0.5109 s before; 0.4989–0.5053 s after (three noise seeds). On `5inch_quadcopter_rotating.raw` it moves from 0.93880 to 0.93996 s. | Passes are timed by their rate-weighted centroid above the threshold. |
 
 ## Open — found, not changed
 
@@ -61,6 +62,8 @@ fail on `05f8cb0` and pass on this branch.
 | GL-32 | Low | Metrics | Staring runs report rotation-coverage metrics (`coverage_azimuth_deg 58`, `coverage_gain_vs_static`) from the default 58° FOV. | `metrics.json` of every staring run. |
 | GL-33 | Low | Lint | 3,336 ruff findings; CI lint is `continue-on-error`. 2,934 are the house style (E702 1,970, E501 866, E701 98). The rest are worth a pass: 16 F841 unused locals (two of them were GL-15 and GL-17), 7 B007, 2 B904, 52 B905. | `ruff check . --statistics`. |
 | GL-34 | Info | GUI | Space-time 3D and the Event-rate tower were not checked (they need OpenGL). | Check on a desktop session. |
+| GL-37 | Medium | Detectors | **A target that turns ON at one phase and OFF half a cycle later puts two bursts per cycle into the total event rate, so its spectrum peaks at 2·f0.** The Studio's stroboscope now adds the ON − OFF rate and a subharmonic rule. `core.frequency.region_spectrum` (used by every flutter detector and the workbench) still measures the total rate only. | Synthetic 50 Hz ON/OFF blink in `tests/test_studio.py`: the total-rate peak was 100.08 Hz; with the signed rate it is 50.0 Hz. On the hummingbird's hover both give ≈ 72 Hz. Whether the detectors' harmonic comb hides this on real rotors was not checked. |
+| GL-38 | Info | Tests | `test_main_window_fits_a_laptop_screen` measures text widths, so it skips when offscreen Qt has no fonts (Windows needs `QT_QPA_FONTDIR`; Linux CI uses fontconfig). Without fonts the placeholder glyphs made the window 1951 px wide. | Seen in a local run without `QT_QPA_FONTDIR`. |
 
 ## How to reproduce the checks
 

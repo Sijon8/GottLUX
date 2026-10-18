@@ -1,0 +1,50 @@
+{
+  "gottlux_version": "1.0.0",
+  "rendered_utc": "2026-10-18T16:24:10+00:00",
+  "source": "5inch_quadcopter_rotating.raw",
+  "shot": {
+    "source": "5inch_quadcopter_rotating.raw",
+    "look": "radar",
+    "params": {
+      "persistence_ms": 300.0
+    },
+    "t0": 1.0,
+    "t1": 4.7552,
+    "crop": null,
+    "speed": 1.0,
+    "fps": 25,
+    "width": 420,
+    "palette": "fire-ice",
+    "denoise": true,
+    "baf_us": 2000.0,
+    "bloom": 0.4,
+    "gamma": 1.0,
+    "resample": "bilinear",
+    "stamp": true,
+    "speed_label": true,
+    "title": "",
+    "legend": false,
+    "rate_strip": false,
+    "pingpong": false,
+    "format": "gif",
+    "gif_colors": 96,
+    "quality": 8
+  },
+  "output": {
+    "format": "gif",
+    "frames": 94,
+    "size": [
+      420,
+      420
+    ],
+    "fps": 25.0,
+    "duration_s": 3.76,
+    "span_s": [
+      1.0,
+      4.7552
+    ],
+    "fps_effective": 25.0,
+    "frame_ms": 40,
+    "file": "quad_radar.gif"
+  }
+}

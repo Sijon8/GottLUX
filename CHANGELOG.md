@@ -82,9 +82,35 @@ Audit of 2026-10-18; each item is tracked in [`docs/ISSUES.md`](docs/ISSUES.md) 
   width (GL-04), playback keeps the requested frame rate (GL-17), and the viewer opens on a
   frame with events in it (GL-18), without a blank band (GL-19) or a dark strip in the light
   theme (GL-20).
+- **`estimate_spin_period_s` could hang** (GL-35): the pass scan stopped advancing when a
+  window's maximum was its left edge; `--assume_spin auto` hung on such recordings. Passes
+  are now also timed by their centroid rather than their argmax (GL-36: ~2 % → ≤1 % on
+  flat-topped passes).
 - Panorama box labels: a sidecar that cannot be written now warns instead of losing the
   labels, an unreadable sidecar is kept as `*.unreadable-<epoch>`, saves are atomic, and a
   box reaching 360° no longer draws a stray edge at 0° (GL-23, GL-24).
+
+### Added — Studio
+
+- **GottLUX Studio: short GIF / MP4 / WebM shots of a recording.** A *shot* is a plain-data
+  recipe (span, crop, look + parameters, speed, frame rate, palette, bloom, overlays,
+  format) rendered by `gottlux.studio` and written with a `.shot.json` beside every file.
+  Nine looks, each documented from first principles in `docs/STUDIO.md`:
+  polarity trails, accumulated frame, time surface, light painting, a 3-D space-time cloud
+  (with camera orbit and a frozen-moment turntable), an event stroboscope (events folded by
+  a measured f0 — on the hummingbird's hover 71.9 Hz, 32 wingbeats onto one cycle), a
+  waterfall (kymograph), flicker hue, and a radar sweep for spinning sensors (spin period
+  from the event-rate periodicity, column sign chosen by panorama sharpness). Exposure is locked per shot so clips do not pump.
+- **Studio tab** in the desktop app (the 11th tab): looping preview, drag-to-crop, the
+  look's auto-built parameter panel, presets, export on a cancellable worker thread,
+  copy/load recipe.
+- **`gottlux-studio`** command: `--look`, `--set key=value`, `--preset`, `--recipe`,
+  `--reel DIR` (every look at once), `--list`.
+- **Web Studio** (`web/studio.html`): the same looks in the browser with quick recipes on
+  the hosted clips, a dependency-free GIF encoder (`web/js/gifenc.js`), MP4/WebM capture via
+  MediaRecorder, and share links that reopen the exact shot. A parity test runs the
+  JavaScript looks under Node against the Python renderer (mean difference < 1/255).
+- `examples/studio_showcase.py` renders the documentation GIFs in `docs/media/studio/`.
 
 ### Added (examples)
 

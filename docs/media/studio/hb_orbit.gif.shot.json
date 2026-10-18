@@ -1,0 +1,56 @@
+{
+  "gottlux_version": "1.0.0",
+  "rendered_utc": "2026-10-18T15:50:54+00:00",
+  "source": "Humming_Bird_Fight_merged_2.raw",
+  "shot": {
+    "source": "Humming_Bird_Fight_merged_2.raw",
+    "look": "spacetime",
+    "params": {
+      "depth_ms": 900.0,
+      "freeze": true,
+      "orbit_deg": 360.0,
+      "time_scale": 2.2,
+      "point_px": 1,
+      "brightness": 1.6,
+      "elevation": 18.0
+    },
+    "t0": 0.55,
+    "t1": 1.45,
+    "crop": null,
+    "speed": 0.25,
+    "fps": 25,
+    "width": 480,
+    "palette": "fire-ice",
+    "denoise": true,
+    "baf_us": 2000.0,
+    "bloom": 0.0,
+    "gamma": 1.0,
+    "resample": "bilinear",
+    "stamp": true,
+    "speed_label": false,
+    "title": "",
+    "legend": false,
+    "rate_strip": false,
+    "pingpong": false,
+    "format": "gif",
+    "gif_colors": 128,
+    "quality": 8
+  },
+  "output": {
+    "format": "gif",
+    "frames": 90,
+    "size": [
+      480,
+      360
+    ],
+    "fps": 25.0,
+    "duration_s": 3.6,
+    "span_s": [
+      0.55,
+      1.45
+    ],
+    "fps_effective": 25.0,
+    "frame_ms": 40,
+    "file": "hb_orbit.gif"
+  }
+}

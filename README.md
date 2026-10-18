@@ -91,6 +91,8 @@ to get a region spectrum, view the flicker map, or drop in any local Prophesee `
 Everything is decoded and processed entirely in the browser; nothing is uploaded. The app
 is served straight from [`web/`](web/) in this repo via GitHub Pages (the URL goes live
 after the first push to `main` once Settings → Pages → Source is set to "GitHub Actions").
+The site's **Studio** page (`studio.html`) makes GIFs and short clips in the browser — see
+[Studio](#studio-gifs-and-short-clips) below.
 
 ## Quick start
 
@@ -101,7 +103,7 @@ captures of hummingbirds and a 5-inch quadcopter, staring and rotating:
 # instant look — the lightweight viewer (also the double-click .raw handler)
 gottlux-view examples/data/Humming_Bird_Fight_merged_shortest.raw
 
-# the full 10-tab instrument
+# the full 11-tab instrument
 gottlux-gui examples/data/5inch_quadcopter.raw
 
 # headless analysis -> a timestamped, self-documenting run folder
@@ -158,6 +160,9 @@ The tabs — one shared recording, all seekable on one clock:
   and auto-tile keep the geometry exact. Export the whole program as a video, or the
   events as one byte-valid `.raw`.
 
+* **Studio** — try visualization *looks* on a span of the recording and push out a GIF,
+  MP4 or WebM shot in seconds (see [Studio](#studio-gifs-and-short-clips)).
+
 A **Capture…** toolbar action records any view over a time range to MP4 with a context
 banner and a self-documenting poster/manifest; the program-wide **Export** writes every
 artifact with an infographic context sheet.
@@ -165,6 +170,27 @@ artifact with an infographic context sheet.
 A **system-wide light/dark theme** rides on a toolbar toggle (sun / moon): the whole
 instrument — every tab, dialog, painted icon, plot canvas and 3-D background — switches
 live, and the choice is remembered and shared with the quick viewer.
+
+## Studio: GIFs and short clips
+
+Nine looks, each derived from first principles in [`docs/STUDIO.md`](docs/STUDIO.md):
+**polarity trails**, **accumulated frame**, **time surface**, **light painting**, a 3-D
+**space-time cloud** (with camera orbit), an **event stroboscope** (events folded by a
+measured wingbeat/rotor frequency into one cycle), a **waterfall** (kymograph),
+**flicker hue**, and a **radar sweep** for spinning sensors (events de-rotated onto a 360°
+dial with a sweeping beam). Pick one, frame the span and crop, set the speed and style, export. The
+same *shot* recipe runs in the desktop **Studio** tab, on the command line and in the web
+Studio, and every export carries a `.shot.json` that re-renders it.
+
+```bash
+gottlux-studio examples/data/Humming_Bird_Fight_merged_2.raw --look strobe \
+    --t0 1.0 --t1 1.45 --crop 0,110,68,178 --bloom 0.8 -o wings.gif     # f0 = 71.9 Hz
+gottlux-studio clip.raw --look spacetime --set freeze=true --set orbit_deg=360 --preset mp4
+gottlux-studio --list                                                    # looks + parameters
+```
+
+![hummingbird wing stroke, event stroboscope](docs/media/studio/hb_strobe.gif)
+![space-time orbit](docs/media/studio/hb_orbit.gif)
 
 ## Massive files
 
@@ -332,6 +358,8 @@ user scripts, and the standalone-export path: **[docs/EXTENDING.md](docs/EXTENDI
 
 * [`INSTALL.md`](INSTALL.md) — Windows & Linux installation, launchers, troubleshooting.
 * [`docs/GUI_GUIDE.md`](docs/GUI_GUIDE.md) — a walkthrough of the interactive dashboard.
+* [`docs/STUDIO.md`](docs/STUDIO.md) — the Studio's visualization methods and animations
+  (the math of each look), export formats, recipes, and how to add a look.
 * [`docs/DETECTOR_GUIDE.md`](docs/DETECTOR_GUIDE.md) — building and tuning flutter
   detectors, with worked settings for drones, insects, and birds.
 * [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — the module map and design principles.

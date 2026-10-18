@@ -1,0 +1,56 @@
+{
+  "gottlux_version": "1.0.0",
+  "rendered_utc": "2026-10-18T15:51:09+00:00",
+  "source": "Humming_Bird_Fight_merged_2.raw",
+  "shot": {
+    "source": "Humming_Bird_Fight_merged_2.raw",
+    "look": "flicker",
+    "params": {
+      "band_lo": 20.0,
+      "band_hi": 120.0
+    },
+    "t0": 0.6,
+    "t1": 1.6,
+    "crop": [
+      0,
+      40,
+      320,
+      280
+    ],
+    "speed": 0.25,
+    "fps": 20,
+    "width": 480,
+    "palette": "fire-ice",
+    "denoise": true,
+    "baf_us": 2000.0,
+    "bloom": 0.0,
+    "gamma": 1.0,
+    "resample": "bilinear",
+    "stamp": true,
+    "speed_label": true,
+    "title": "",
+    "legend": false,
+    "rate_strip": false,
+    "pingpong": false,
+    "format": "gif",
+    "gif_colors": 128,
+    "quality": 8
+  },
+  "output": {
+    "format": "gif",
+    "frames": 80,
+    "size": [
+      480,
+      360
+    ],
+    "fps": 20.0,
+    "duration_s": 4.0,
+    "span_s": [
+      0.6,
+      1.6
+    ],
+    "fps_effective": 20.0,
+    "frame_ms": 50,
+    "file": "hb_flicker.gif"
+  }
+}

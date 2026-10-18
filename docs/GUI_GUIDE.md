@@ -2,7 +2,7 @@
 
 Launch it with **`gottlux-gui`** (or `python -m gottlux`). Open a recording from the toolbar
 (**Open file…** for a `.raw`/`.meta.json`, **Open folder…** for a capture folder). Decoding runs
-on a background thread behind a progress bar; the same recording then feeds all ten tabs.
+on a background thread behind a progress bar; the same recording then feeds all eleven tabs.
 
 This guide walks the core analysis tabs (Live viewer, Event-rate tower, Space-time 3D, Flutter
 workbench, Sandbox, Fusion lab, Timeline) plus the **Canvas composer** and the **Tools menu**;
@@ -382,6 +382,31 @@ as missing rather than aborting the export.
 The completion dialog reports the folder path and opens it in the file browser. View captures
 (**Capture view…**) use the same convention: the MP4, the optional poster PNG, and the two
 documents — the capture's former `*_manifest.json` is merged into `provenance.json`.
+
+---
+
+## Studio (GIFs and short clips)
+
+The last tab turns a span of the recording into a short animation. Left: a looping preview;
+right: the deck.
+
+1. **Visualization** — pick a look (trails, accumulated frame, time surface, light painting,
+   space-time cloud, event stroboscope, waterfall, flicker hue, radar sweep for spinning
+   sensors). The description says what it
+   shows; its parameters appear below, auto-built like the detector tuner.
+2. **Shot** — the span (*Use In/Out* takes the transport's selection, *Whole clip* the lot),
+   the speed (real time to 100× slower) and denoise. Click **Crop** under the preview: it
+   shows the whole sensor's activity over the span; drag a box around the subject.
+3. **Style** — palette, bloom, gamma, a title, and which overlays to draw (time, speed,
+   ON/OFF key, event-rate strip with a playhead, ping-pong loop).
+4. **Export** — a preset (`gif`, `gif-small`, `gif-large`, `mp4`, `mp4-hd`, `mp4-smooth`,
+   `webm`), or set format, width and frame rate yourself; **Export** renders at full size on a
+   worker thread (cancellable) into the folder shown (default `~/Videos/GottLux Studio`),
+   never overwriting. **Copy recipe** puts the shot on the clipboard as JSON; **Load
+   recipe…** reads a `.shot.json` written beside any export, by `gottlux-studio`, or by the
+   web Studio.
+
+Method notes for every look: [STUDIO.md](STUDIO.md).
 
 ---
 

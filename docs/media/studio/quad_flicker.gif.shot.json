@@ -1,0 +1,52 @@
+{
+  "gottlux_version": "1.0.0",
+  "rendered_utc": "2026-10-18T15:51:16+00:00",
+  "source": "5inch_quadcopter.raw",
+  "shot": {
+    "source": "5inch_quadcopter.raw",
+    "look": "flicker",
+    "params": {
+      "band_lo": 90.0,
+      "band_hi": 700.0,
+      "window_ms": 200.0
+    },
+    "t0": 3.2,
+    "t1": 4.3,
+    "crop": null,
+    "speed": 0.35,
+    "fps": 20,
+    "width": 420,
+    "palette": "fire-ice",
+    "denoise": true,
+    "baf_us": 2000.0,
+    "bloom": 0.0,
+    "gamma": 1.0,
+    "resample": "bilinear",
+    "stamp": true,
+    "speed_label": true,
+    "title": "",
+    "legend": false,
+    "rate_strip": false,
+    "pingpong": false,
+    "format": "gif",
+    "gif_colors": 128,
+    "quality": 8
+  },
+  "output": {
+    "format": "gif",
+    "frames": 63,
+    "size": [
+      420,
+      420
+    ],
+    "fps": 20.0,
+    "duration_s": 3.15,
+    "span_s": [
+      3.2,
+      4.3
+    ],
+    "fps_effective": 20.0,
+    "frame_ms": 50,
+    "file": "quad_flicker.gif"
+  }
+}

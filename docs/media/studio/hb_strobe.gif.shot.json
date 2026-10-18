@@ -1,0 +1,58 @@
+{
+  "gottlux_version": "1.0.0",
+  "rendered_utc": "2026-10-18T15:50:48+00:00",
+  "source": "Humming_Bird_Fight_merged_2.raw",
+  "shot": {
+    "source": "Humming_Bird_Fight_merged_2.raw",
+    "look": "strobe",
+    "params": {
+      "bins": 24,
+      "cycles": 1,
+      "width": 0.09
+    },
+    "t0": 1.0,
+    "t1": 1.45,
+    "crop": [
+      0,
+      110,
+      68,
+      178
+    ],
+    "speed": 0.1,
+    "fps": 16,
+    "width": 360,
+    "palette": "fire-ice",
+    "denoise": true,
+    "baf_us": 2000.0,
+    "bloom": 0.8,
+    "gamma": 1.0,
+    "resample": "bilinear",
+    "stamp": true,
+    "speed_label": true,
+    "title": "",
+    "legend": false,
+    "rate_strip": false,
+    "pingpong": false,
+    "format": "gif",
+    "gif_colors": 128,
+    "quality": 8
+  },
+  "output": {
+    "format": "gif",
+    "frames": 24,
+    "size": [
+      360,
+      360
+    ],
+    "fps": 16.0,
+    "duration_s": 1.44,
+    "span_s": [
+      1.0,
+      1.45
+    ],
+    "fps_effective": 16.666666666666668,
+    "frame_ms": 60,
+    "f0_hz": 71.86137999735513,
+    "file": "hb_strobe.gif"
+  }
+}

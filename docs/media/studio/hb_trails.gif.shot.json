@@ -1,0 +1,55 @@
+{
+  "gottlux_version": "1.0.0",
+  "rendered_utc": "2026-10-18T15:50:46+00:00",
+  "source": "Humming_Bird_Fight_merged_2.raw",
+  "shot": {
+    "source": "Humming_Bird_Fight_merged_2.raw",
+    "look": "trails",
+    "params": {
+      "tau_ms": 5.0
+    },
+    "t0": 0.55,
+    "t1": 1.1,
+    "crop": [
+      0,
+      40,
+      320,
+      280
+    ],
+    "speed": 0.12,
+    "fps": 25,
+    "width": 480,
+    "palette": "fire-ice",
+    "denoise": true,
+    "baf_us": 2000.0,
+    "bloom": 0.7,
+    "gamma": 1.0,
+    "resample": "bilinear",
+    "stamp": true,
+    "speed_label": true,
+    "title": "hummingbird dart",
+    "legend": true,
+    "rate_strip": false,
+    "pingpong": false,
+    "format": "gif",
+    "gif_colors": 128,
+    "quality": 8
+  },
+  "output": {
+    "format": "gif",
+    "frames": 115,
+    "size": [
+      480,
+      360
+    ],
+    "fps": 25.0,
+    "duration_s": 4.6,
+    "span_s": [
+      0.55,
+      1.1
+    ],
+    "fps_effective": 25.0,
+    "frame_ms": 40,
+    "file": "hb_trails.gif"
+  }
+}
