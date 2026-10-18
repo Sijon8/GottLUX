@@ -223,10 +223,18 @@ class Recording:
         """Return ``(centers_s, rate_hz)`` — the event rate vs time at *bin_s* resolution."""
         if not self.n:
             return np.zeros(0), np.zeros(0)
-        edges = np.arange(0.0, self.duration_s + bin_s, bin_s)
+        # bins on the recording's own clock (t need not start at 0, e.g. after a cut); the
+        # last bin usually runs past the final event, so divide it by the span it covers
+        # rather than the full bin width — otherwise every rate trace dips at the end
+        t0, t1 = self.t_start_s, self.t_stop_s
+        edges = t0 + np.arange(0.0, self.duration_s + bin_s, bin_s)
         counts = np.histogram(self.t.astype(np.float64) / 1e6, bins=edges)[0]
-        centers = 0.5 * (edges[:-1] + edges[1:])
-        return centers, counts / bin_s
+        widths = np.minimum(edges[1:], t1) - edges[:-1]
+        widths[-1] = max(widths[-1], 1e-6)
+        if widths[-1] < 0.25 * bin_s and counts.size > 1:   # a sliver: too noisy to keep
+            edges, counts, widths = edges[:-1], counts[:-1], widths[:-1]
+        centers = 0.5 * (edges[:-1] + np.minimum(edges[1:], t1))
+        return centers, counts / widths
 
     # --------------------------------------------------------------- telemetry
     def attach_telemetry(self, tel: Telemetry, refine: bool = True) -> "Recording":

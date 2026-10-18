@@ -539,10 +539,13 @@ def _config_from_args(a) -> Config:
         cfg.freq_lo = a.freq_lo
     if a.freq_hi is not None:
         cfg.freq_hi = a.freq_hi
+    # an explicit band/SNR wins over a preset detector's own (run.pipeline.adopt_signature_band)
+    cfg.band_explicit = a.freq_lo is not None or a.freq_hi is not None
     if a.fft_fs is not None:
         cfg.fft_fs = a.fft_fs
     if a.snr is not None:
         cfg.snr_thresh = a.snr
+    cfg.snr_explicit = a.snr is not None
     # window of interest
     cfg.t_start = a.t_start
     cfg.t_stop = a.t_stop

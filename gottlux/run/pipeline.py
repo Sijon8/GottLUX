@@ -317,10 +317,14 @@ def _plot_spectrum(rec, cfg, run, det):
 
 def _plot_spectrogram(rec, cfg, run, det):
     from gottlux.viz import spectral
-    mid = rec.t_start_s + rec.duration_s * 0.3
-    tt, ff, S = fq.spectrogram(rec.window(mid, min(mid + 3.0, rec.t_stop_s)).t,
-                               fs=cfg.fft_fs, fmax=cfg.freq_hi)
-    return _save(spectral.spectrogram_figure(tt, ff, S, title="Global spectrogram",
+    # the whole recording (or 30 s around its middle), plotted on the recording's clock —
+    # the STFT returns window-relative times, so shift them by the window start
+    span = min(rec.duration_s, 30.0)
+    t0 = rec.t_start_s + 0.5 * (rec.duration_s - span)
+    win = rec.window(t0, t0 + span)
+    tt, ff, S = fq.spectrogram(win.t, fs=cfg.fft_fs, fmax=cfg.freq_hi)
+    t_first = float(win.t[0]) * 1e-6 if win.n else t0      # bin_signal starts at the 1st event
+    return _save(spectral.spectrogram_figure(tt + t_first, ff, S, title="Global spectrogram",
                  fmax=cfg.freq_hi), run, "spectrogram", cfg)
 
 
@@ -410,10 +414,41 @@ def analysis_plots(rec, cfg, run, names):
 # ====================================================================================
 # Orchestration
 # ====================================================================================
+def adopt_signature_band(cfg: Config) -> None:
+    """Give a preset detector its own band and SNR gate unless the caller chose them.
+
+    The :class:`Config` defaults (80–800 Hz, SNR 4) are the drone band. Every detector call
+    below passes ``cfg.freq_lo/freq_hi/snr_thresh`` as overrides, which would otherwise run
+    the ``hummingbird`` (15–120 Hz), ``insect``, ``mosquito`` and ``bird`` presets at the
+    drone band. A band or SNR the caller set (``cfg.band_explicit`` / ``cfg.snr_explicit``,
+    or any non-default value) is kept. The flicker map and spectra read the same fields, so
+    they follow the preset too, and the manifest records the band actually used.
+    """
+    if not cfg.detector:
+        return
+    from gottlux.detectors import list_detectors
+    from gottlux.detectors.signatures import get_signature
+    sig_name = getattr(list_detectors().get(cfg.detector), "SIGNATURE", None)
+    if not sig_name:
+        return
+    sig = get_signature(sig_name)
+    if (not getattr(cfg, "band_explicit", False)
+            and (cfg.freq_lo, cfg.freq_hi) == (Config.freq_lo, Config.freq_hi)):
+        cfg.freq_lo, cfg.freq_hi = float(sig.freq_lo), float(sig.freq_hi)
+        _log(f"detector '{cfg.detector}': using its {sig.freq_lo:g}–{sig.freq_hi:g} Hz band")
+    if not getattr(cfg, "snr_explicit", False) and cfg.snr_thresh == Config.snr_thresh:
+        cfg.snr_thresh = float(sig.default_snr)
+
+
 def run_recording(rec, cfg: Config, analyses=None) -> str:
     """Run analyses (or, if ``cfg.plots`` is set, just those specific figures) on an
     already-loaded *rec*; returns the run-folder path."""
-    run = RunFolder(cfg, rec)
+    adopt_signature_band(cfg)
+    # --assume_spin used to reach only the rotation analyses, so the default analyses and
+    # every --plots figure (panorama, radar, ...) silently stayed in staring mode
+    from gottlux.run.rotation_pipeline import _maybe_synthesize_telemetry
+    _maybe_synthesize_telemetry(rec, cfg)
+    run = RunFolder(cfg, rec, root=cfg.output_root)
     _log(f"run folder: {run.path}")
     run.snapshot_source()
     det_result = None
