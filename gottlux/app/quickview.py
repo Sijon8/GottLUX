@@ -12,6 +12,11 @@ In/Out cutting + inline Save/Merge/MP4) wrapped in a thin frame — none of the 
 tabs of the full instrument, so it pops up and renders fast. One prominent button hands the
 recording to the full GottLUX suite when you want the 3-D cloud, workbench, trackers, etc.
 
+**Large files open as samples.** A ``.raw`` of 100 MB or more without a decode cache opens as
+byte samples (:func:`gottlux.io.preview.sample_recording`): the first 25 MB plays at once, the
+middle and last 25 MB follow, seeks elsewhere decode on demand, and nothing else is decoded
+until **Decode whole file** is pressed.
+
 **Single-instance, for fast clip-hopping.** The first double-click starts the process and the
 window stays warm; every later double-click is handed to that running window over a local
 socket and the *new* process exits immediately — before importing the heavy viewer / pyqtgraph
@@ -121,8 +126,9 @@ class QuickViewWindow(QtWidgets.QMainWindow):
         self.full_btn.setLayoutDirection(QtCore.Qt.RightToLeft)   # chevron on the right
         self.full_btn.setObjectName("primary")
         self.full_btn.setToolTip("Hand this recording to the full GottLUX instrument — Space-time "
-                                 "3-D, workbench, trackers, range lab and the rest. The decode is "
-                                 "already cached, so it opens instantly.")
+                                 "3-D, workbench, trackers, range lab and the rest. A decoded "
+                                 "recording opens instantly; a sampled large file is handed over "
+                                 "by path and opens there with its own preview.")
         self.full_btn.clicked.connect(self._open_full_suite)
         tb.addWidget(self.full_btn)
 
@@ -155,6 +161,14 @@ class QuickViewWindow(QtWidgets.QMainWindow):
         self.progress.setMaximumWidth(220)
         self.progress.setVisible(False)
         self.status.addPermanentWidget(self.progress)
+        # large files open as byte samples; this decodes the rest on request
+        self.decode_btn = QtWidgets.QPushButton("Decode whole file")
+        self.decode_btn.setToolTip("The view shows sampled parts of a large file (start, "
+                                   "middle, end). Decode all of it into the cache — slower, "
+                                   "but every moment is then instant.")
+        self.decode_btn.clicked.connect(self._decode_whole)
+        self.decode_btn.setVisible(False)
+        self.status.addPermanentWidget(self.decode_btn)
         self.status.showMessage("Open a recording to begin — .raw, .h5/.hdf5, a decoded "
                                 "cache, or a capture folder (drag-and-drop works too).")
 
@@ -203,18 +217,37 @@ class QuickViewWindow(QtWidgets.QMainWindow):
         else:
             super().dropEvent(ev)
 
-    def load(self, path):
-        """Decode *path* on a worker thread. Rapid calls supersede each other (latest wins)."""
-        from gottlux.app.loader import RecordingLoader
+    def load(self, path, full=False, sample=True):
+        """Decode *path* on a worker thread. Rapid calls supersede each other (latest wins).
+
+        A large uncached ``.raw`` (≥ 100 MB, :func:`gottlux.io.preview.should_sample`) opens
+        as byte samples — the first, middle and last 25 MB — with no whole-file pass and no
+        automatic full decode; *full* (or the "Decode whole file" button) decodes it all."""
+        from gottlux.app.loader import RecordingLoader, SampledLoader
+        from gottlux.io import preview as _preview
         path = os.path.abspath(path)
         self._path = path
         self._load_token += 1
         token = self._load_token
+        self.decode_btn.setVisible(False)
         self.setWindowTitle(f"GottLUX {__version__} — quick view — {os.path.basename(path)}")
-        self.status.showMessage(f"Decoding {os.path.basename(path)} …")
         self.progress.setVisible(True)
         self.progress.setValue(0)
-        loader = RecordingLoader(path)
+        if sample and not full and _preview.should_sample(path):
+            mb = os.path.getsize(path) / 2**20
+            self.status.showMessage(f"Opening a sample of {os.path.basename(path)} "
+                                    f"({mb:,.0f} MB): start, then middle and end …")
+            loader = SampledLoader(path)
+            loader.progress.connect(lambda f, t=token: self._on_progress(f, t))
+            loader.preview.connect(lambda rec, t=token: self._on_sampled(rec, t))
+            loader.failed.connect(lambda msg, t=token, p=path: self._sample_failed(p, msg, t))
+            loader.finished.connect(
+                lambda lo=loader: self._loaders.remove(lo) if lo in self._loaders else None)
+            self._loaders.append(loader)
+            loader.start()
+            return
+        self.status.showMessage(f"Decoding {os.path.basename(path)} …")
+        loader = RecordingLoader(path, allow_preview=not full)
         loader.progress.connect(lambda f, t=token: self._on_progress(f, t))
         loader.preview.connect(lambda rec, t=token: self._on_preview(rec, t))
         loader.loaded.connect(lambda rec, t=token: self._on_loaded(rec, t))
@@ -247,12 +280,83 @@ class QuickViewWindow(QtWidgets.QMainWindow):
         self.clock.set_loop(True)
         self.clock.play()
 
+    def _on_sampled(self, rec, token=None):
+        """A byte-sampled large file: the first call shows the start chunk; the second (the
+        middle and end merged in) swaps in without moving the cursor or play state."""
+        if token is not None and token != self._load_token:
+            return
+        same = (self.rec is not None and getattr(self.rec, "is_sampled", False)
+                and getattr(self.rec, "source_path", None) == rec.source_path)
+        self.rec = rec
+        self.info_lbl.setText(
+            f"  {rec.name}  ·  {rec.width}×{rec.height}  ·  {rec.describe()}  ·  "
+            f"{rec.n:,} ev  ·  {rec.duration_s:.2f}s  ·  {rec.fmt}  ")
+        seek = ("seek anywhere: an un-sampled moment decodes on demand"
+                if getattr(rec, "seekable", False) else "only the start can be sampled")
+        self.status.showMessage(f"Sampled view ({seek}).")
+        self.decode_btn.setVisible(True)
+        self.decode_btn.setEnabled(True)
+        self._set_actions_enabled(True)
+        if same:
+            cursor, playing = self.clock.cursor, self.clock.playing
+            self.clock.pause()
+            self.clock.set_range(rec.t_start_s, rec.t_stop_s)
+            self.clock.set_cursor(min(cursor, rec.t_stop_s))
+            self.viewer.set_recording(rec)
+            self.progress.setVisible(False)
+            if playing:
+                self.clock.play()
+            return
+        self.clock.pause()
+        self.clock.set_range(rec.t_start_s, rec.t_stop_s)   # the whole file's span
+        self.clock.set_cursor(rec.t_start_s)
+        self.clock.set_selection(0.0, 1.0)
+        self.clock.clear_highlights()
+        self.viewer.set_recording(rec)
+        self.clock.set_loop(True)
+        self.clock.play()
+
+    def _sample_failed(self, path, msg, token):
+        """Sampling is best-effort. If nothing of this file is showing yet, open it the
+        normal way; if the start chunk is already playing, keep it and say what failed."""
+        if token != self._load_token:
+            return
+        showing = (getattr(self.rec, "is_sampled", False)
+                   and getattr(self.rec, "source_path", None) == path)
+        if showing:
+            self.progress.setVisible(False)
+            self.status.showMessage("Sampled the start only — the middle/end chunks could not "
+                                    f"be read ({msg.splitlines()[0]}).")
+        else:
+            self.load(path, sample=False)
+
+    def _decode_whole(self):
+        """Decode the sampled file completely (into the cache); swaps in when done."""
+        if self._path is None:
+            return
+        from gottlux.app.loader import RecordingLoader
+        token = self._load_token
+        self.decode_btn.setEnabled(False)
+        self.progress.setVisible(True)
+        self.progress.setValue(0)
+        self.status.showMessage(f"Decoding all of {os.path.basename(self._path)} — the sampled "
+                                "view keeps playing meanwhile …")
+        loader = RecordingLoader(self._path, allow_preview=False)
+        loader.progress.connect(lambda f, t=token: self._on_progress(f, t))
+        loader.loaded.connect(lambda rec, t=token: self._on_loaded(rec, t))
+        loader.failed.connect(lambda msg, t=token: self._on_failed(msg, t))
+        loader.finished.connect(
+            lambda lo=loader: self._loaders.remove(lo) if lo in self._loaders else None)
+        self._loaders.append(loader)
+        loader.start()
+
     def _on_loaded(self, rec, token=None):
         if token is not None and token != self._load_token:
             return                               # a newer click superseded this decode
         upgrading = self.rec is not None and getattr(self.rec, "is_preview", False)
         self.rec = rec
         self.progress.setVisible(False)
+        self.decode_btn.setVisible(False)
         self.info_lbl.setText(
             f"  {rec.name}  ·  {rec.width}×{rec.height}  ·  {rec.n:,} ev  ·  "
             f"{rec.duration_s:.2f}s  ·  {rec.fmt}  ·  "

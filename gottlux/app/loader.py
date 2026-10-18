@@ -52,6 +52,40 @@ class RecordingLoader(QtCore.QThread):
             self.failed.emit(f"{e}\n\n{traceback.format_exc()}")
 
 
+class SampledLoader(QtCore.QThread):
+    """The quick viewer's large-file open: decode byte samples only
+    (:func:`gottlux.io.preview.sample_recording` — the first, middle and last chunk), no
+    whole-file pass and no automatic full decode. ``preview`` fires twice: once the first
+    chunk is playable, again when the middle and end are in. A later full decode is the
+    window's choice (a plain :class:`RecordingLoader` with ``allow_preview=False``)."""
+    progress = QtCore.Signal(float)
+    preview = QtCore.Signal(object)
+    finished_sampling = QtCore.Signal(object)
+    failed = QtCore.Signal(str)
+
+    def __init__(self, path, chunk_mb=None, parent=None):
+        super().__init__(parent)
+        self.path = path
+        self.chunk_mb = chunk_mb
+
+    def run(self):
+        try:
+            from gottlux.io import preview as _preview
+            mb = self.chunk_mb or _preview.SAMPLE_CHUNK_MB
+            self.progress.emit(0.05)
+            stages = []
+
+            def on_stage(rec):
+                stages.append(rec)
+                self.progress.emit(0.5 if len(stages) == 1 else 1.0)
+                self.preview.emit(rec)
+            rec = _preview.sample_recording(self.path, chunk_mb=mb, on_stage=on_stage)
+            self.finished_sampling.emit(rec)
+        except Exception as e:                # surface decode errors to the UI, never crash
+            import traceback
+            self.failed.emit(f"{e}\n\n{traceback.format_exc()}")
+
+
 class PreviewPrefetcher(QtCore.QThread):
     """Decode an un-covered span of a :class:`~gottlux.io.preview.PreviewRecording` off the
     GUI thread — the seek-into-a-gap path of the sampled preview.

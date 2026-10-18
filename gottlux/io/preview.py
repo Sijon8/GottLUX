@@ -24,6 +24,15 @@ Three pieces:
    spans; seeking into an undecoded region triggers a bounded on-demand slice decode
    (~sub-second) inside :meth:`~PreviewRecording.window`.
 
+A second, lighter mode serves the **quick viewer** (:func:`sample_recording`, policy
+:func:`should_sample` — default :data:`SAMPLE_THRESHOLD_MB` = 100 MB, env
+``GOTTLUX_QUICKVIEW_SAMPLE_MB``): no index pass at all. It reads the first, middle and last
+:data:`SAMPLE_CHUNK_MB` (25 MB) of the encoded stream by seeking; the last chunk's final
+TIME_HIGH gives the end time, the first chunk's TIME_HIGHs the pre-roll origin, and the middle
+and end chunks are entered at their first TIME_HIGH word with a seeded decoder (exact for
+EVT2.x). Seeks elsewhere are placed by interpolating byte↔time anchors and probing. EVT3
+samples only its start. Nothing is decoded in the background.
+
 Policy: the GUI loader shows a preview only for a **large, uncached** EVT2.x ``.raw``
 (:func:`should_preview` — default threshold :data:`PREVIEW_THRESHOLD_MB`, env override
 ``GOTTLUX_PREVIEW_THRESHOLD_MB``, ``0``/negative disables), then continues the untouched
@@ -462,3 +471,312 @@ def preview_recording(path, slice_s=SLICE_S, n_slices=N_SLICES,
                 source_path=path)
     name = os.path.splitext(os.path.basename(path))[0]
     return PreviewRecording(data, ix, cov_us, full_dur, name=name)
+
+
+# ====================================================================================
+# Byte-sampled open (quick viewer): first / middle / last N MB, no whole-file pass
+# ====================================================================================
+#: Files at least this large (MB) open in the quick viewer as byte samples.
+SAMPLE_THRESHOLD_MB = 100.0
+_ENV_SAMPLE = "GOTTLUX_QUICKVIEW_SAMPLE_MB"
+#: Size of each sampled chunk (MB of the encoded stream).
+SAMPLE_CHUNK_MB = 25.0
+#: Words decoded per seek into an un-sampled region (~16 MB of EVT2.1, ~8 MB of EVT2.0).
+SEEK_WORDS = 2_000_000
+_MAX_ANCHORS_PER_CHUNK = 4000
+
+
+def sample_threshold_bytes():
+    """The quick viewer's sampling threshold in bytes, or ``None`` when sampling is off.
+
+    Default :data:`SAMPLE_THRESHOLD_MB` (100 MB); the ``GOTTLUX_QUICKVIEW_SAMPLE_MB`` env var
+    overrides it (``0`` or negative disables)."""
+    mb = SAMPLE_THRESHOLD_MB
+    v = os.environ.get(_ENV_SAMPLE)
+    if v is not None:
+        try:
+            mb = float(v)
+        except ValueError:
+            pass
+    return None if mb <= 0 else int(mb * 2**20)
+
+
+def should_sample(path) -> bool:
+    """True iff the quick viewer should open *path* as byte samples: an over-threshold,
+    **uncached** ``.raw`` (EVT2.1 / EVT2.0 sample start, middle and end; EVT3 samples only
+    its start). A cache hit is already instant; HDF5 takes the normal decode."""
+    thr = sample_threshold_bytes()
+    if thr is None:
+        return False
+    try:
+        p = str(path)
+        if not p.lower().endswith(".raw") or not os.path.exists(ext(p)):
+            return False
+        if os.path.getsize(ext(p)) < thr or _cache.has_valid_cache(p):
+            return False
+        meta, _ = _dec.parse_header(p)
+        return _dec.detect_format(meta) in ("evt21", "evt2", "evt3")
+    except Exception:
+        return False
+
+
+def _th_words(fmt, w):
+    """Word indices and values of the TIME_HIGH words in an EVT2.x word array."""
+    if fmt == "evt21":
+        idx = np.nonzero((w >> np.uint64(60)).astype(np.uint8) == 0x8)[0]
+        vals = ((w[idx] >> np.uint64(32)) & np.uint64(0x0FFFFFFF)).astype(np.int64)
+    else:
+        idx = np.nonzero((w >> np.uint32(28)) == np.uint32(0x8))[0]
+        vals = (w[idx] & np.uint32(0x0FFFFFFF)).astype(np.int64)
+    return idx.astype(np.int64), vals
+
+
+def _read_words(path, off, fmt, w0, w1):
+    wb = np.dtype(_dec.word_dtype(fmt)).itemsize
+    with open(ext(path), "rb") as f:
+        f.seek(off + int(w0) * wb)
+        buf = f.read(max(int(w1) - int(w0), 0) * wb)
+    return np.frombuffer(buf[: (len(buf) // wb) * wb], dtype=_dec.word_dtype(fmt))
+
+
+def _decode_entered(fmt, w, w0, total, unit):
+    """Decode an EVT2.x word range entered mid-file at its first TIME_HIGH.
+
+    Returns ``(x, y, p, t, cov0_us, cov1_us, anchors)``: events time-sorted in absolute µs,
+    the span they cover completely (from the first TIME_HIGH; to the last TIME_HIGH, or to
+    just past it when the range runs to the end of the file), and ``(word, µs)`` anchors
+    for later seeks."""
+    idx, vals = _th_words(fmt, w)
+    empty = (np.zeros(0, np.uint16), np.zeros(0, np.uint16), np.zeros(0, np.uint8),
+             np.zeros(0, np.int64))
+    if not idx.size:
+        return (*empty, 0, 0, np.zeros((0, 2), np.int64))
+    vals = np.maximum.accumulate(vals)
+    i0 = int(idx[0])
+    st = _dec.init_state(fmt, dict(hi=int(vals[0]), seen=True))
+    x, y, p, t = _dec.CHUNK[fmt](w[i0:], st)
+    cov0 = int(vals[0]) * unit
+    at_eof = w0 + len(w) >= total
+    cov1 = (int(vals[-1]) + 1) * unit if at_eof else int(vals[-1]) * unit
+    if len(t):
+        o = np.argsort(t, kind="stable")
+        x, y, p, t = x[o], y[o], p[o], t[o]
+        keep = (t >= cov0) & (t < cov1)
+        x, y, p, t = x[keep], y[keep], p[keep], t[keep]
+    step = max(1, idx.size // _MAX_ANCHORS_PER_CHUNK)
+    anchors = np.stack([idx[::step] + int(w0), vals[::step] * unit], axis=1)
+    return x, y, p, t, cov0, max(cov1, cov0), anchors
+
+
+class SampledRecording(PreviewRecording):
+    """A :class:`PreviewRecording` built from **byte samples** of a large ``.raw`` with no
+    whole-file pass: the first, middle and last :data:`SAMPLE_CHUNK_MB` of the encoded
+    stream (EVT3: the first only). The timeline spans the whole file (its end time comes
+    from the last chunk); seeking into an un-sampled region decodes :data:`SEEK_WORDS`
+    words there, placed by interpolating the byte↔time anchors gathered so far.
+
+    ``chunks`` lists what was decoded (``(label, byte0, byte1)`` in the encoded payload),
+    ``file_bytes`` the payload size, ``sampled_bytes`` the bytes decoded so far, and
+    ``duration_known`` is False when the end time could not be read (EVT3)."""
+
+    is_sampled = True
+
+    def __init__(self, data, coverage_us, full_duration_s, name, *, fmt, off, total_words,
+                 anchors, chunks, duration_known):
+        super().__init__(data, None, coverage_us, full_duration_s, name=name)
+        self._off = int(off)
+        self._total_words = int(total_words)
+        self._wb = np.dtype(_dec.word_dtype(fmt)).itemsize
+        self._unit = _HIGH_UNIT_US[fmt]
+        self._anchors = np.asarray(anchors, np.int64).reshape(-1, 2)
+        self.chunks = list(chunks)
+        self.duration_known = bool(duration_known)
+        self.seekable = fmt in ("evt21", "evt2")
+
+    @property
+    def file_bytes(self) -> int:
+        return self._total_words * self._wb
+
+    @property
+    def sampled_bytes(self) -> int:
+        spans = _merge_spans([(b0, b1) for _, b0, b1 in self.chunks])
+        return int(sum(b - a for a, b in spans))
+
+    def describe(self) -> str:
+        """One line for status bars and provenance: what has been decoded. Sizes are in
+        MB of 2^20 bytes, the unit the thresholds are set in."""
+        def mb(b):
+            return f"{b / 2**20:,.1f} MB" if b < 10 * 2**20 else f"{b / 2**20:,.0f} MB"
+        labels = [c[0] for c in self.chunks if c[0] in ("start", "middle", "end", "whole")]
+        each = mb(int(self.chunks[0][2] - self.chunks[0][1])) if self.chunks else "0 MB"
+        what = "whole file" if labels == ["whole"] else f"{'/'.join(labels)} {each} each"
+        tail = "" if self.duration_known else " · end time unknown (EVT3: start only)"
+        return (f"sampled {what} of {mb(self.file_bytes)} "
+                f"({100.0 * self.sampled_bytes / max(self.file_bytes, 1):.1f} % decoded){tail}")
+
+    # ---------------------------------------------------------------- seek-decode
+    def _decode_gap(self, ga, gb, cap) -> bool:
+        if not self.seekable or self._anchors.shape[0] < 2:
+            return False
+        target = self.t0_us + int(ga)
+        order = np.argsort(self._anchors[:, 1], kind="stable")
+        times, words = self._anchors[order, 1], self._anchors[order, 0]
+        est = float(np.interp(target, times, words))
+        start = int(max(0, min(est - 0.05 * SEEK_WORDS, self._total_words - 1)))
+        for _ in range(6):                        # a few probes; each adds anchors
+            end = min(start + SEEK_WORDS, self._total_words)
+            w = _read_words(self.source_path, self._off, self.fmt, start, end)
+            x, y, p, t, cov0, cov1, anc = _decode_entered(self.fmt, w, start,
+                                                          self._total_words, self._unit)
+            if anc.size:
+                self._anchors = np.concatenate([self._anchors, anc])
+            if cov1 <= cov0:
+                return False
+            if target < cov0 and start > 0:       # landed too late: step back
+                rate = (end - start) / max(cov1 - cov0, 1)
+                start = int(max(0, start - (cov0 - target) * rate - 0.1 * SEEK_WORDS))
+                continue
+            if target >= cov1 and end < self._total_words:   # too early: step forward
+                rate = (end - start) / max(cov1 - cov0, 1)
+                start = int(min(self._total_words - 1, end + (target - cov1) * rate
+                                - 0.05 * SEEK_WORDS))
+                continue
+            self.chunks.append(("seek", start * self._wb, end * self._wb))
+            return self._insert(x, y, p, t, max(cov0 - self.t0_us, int(ga)),
+                                cov1 - self.t0_us, cap)
+        return False
+
+    def _insert(self, x, y, p, t_abs, c0, c1, cap) -> bool:
+        """Merge decoded events covering relative ``[c0, c1)`` (clipped to *cap* and to the
+        spans already covered) into the sorted arrays and the coverage list."""
+        if cap is not None:
+            c1 = min(c1, cap)
+        for a, b in self._cov_us:                 # never duplicate a covered span
+            if a <= c0 < b:
+                c0 = b
+            if a < c1 <= b:
+                c1 = a
+        if c1 <= c0:
+            return False
+        t_new = t_abs - self.t0_us
+        k0 = int(np.searchsorted(t_new, c0, side="left"))
+        k1 = int(np.searchsorted(t_new, c1, side="left"))
+        i = int(np.searchsorted(np.asarray(self.t), c0, side="left"))
+        self.x = np.concatenate([self.x[:i], x[k0:k1].astype(np.uint16), self.x[i:]])
+        self.y = np.concatenate([self.y[:i], y[k0:k1].astype(np.uint16), self.y[i:]])
+        self.p = np.concatenate([self.p[:i], p[k0:k1].astype(np.uint8), self.p[i:]])
+        self.t = np.concatenate([self.t[:i], t_new[k0:k1].astype(np.int64), self.t[i:]])
+        if self.n_on_cached >= 0:
+            self.n_on_cached += int((p[k0:k1] == 1).sum())
+        self._cov_us = _merge_spans(self._cov_us + [(int(c0), int(c1))])
+        return True
+
+
+def sample_recording(path, chunk_mb=SAMPLE_CHUNK_MB, on_stage=None) -> SampledRecording:
+    """Open *path* by decoding byte samples only — the quick viewer's large-file path.
+
+    1. Read the first and the last *chunk_mb* MB of the encoded stream. The last chunk's
+       final TIME_HIGH gives the file's end time without reading anything in between.
+    2. Decode the first chunk from the file start (the decoder's own state) and drop a
+       pre-roll exactly as a full decode would, then call ``on_stage(rec)`` — the window can
+       play this within about a second.
+    3. Enter a middle chunk and the last chunk at their first TIME_HIGH word (EVT2.x words
+       are self-describing, so a seeded decoder is exact from there), merge them, and call
+       ``on_stage(rec)`` again. Returns the final :class:`SampledRecording`.
+
+    EVT3 keeps a time-wrap and row state that cannot be recovered mid-file, so an EVT3
+    file is sampled at its start only (and its timeline covers just that span). A file no
+    bigger than three chunks is decoded whole."""
+    path = os.path.abspath(path)
+    meta, off = _dec.parse_header(path)
+    fmt = _dec.detect_format(meta)
+    width, height = _dec.geometry(meta)
+    wb = np.dtype(_dec.word_dtype(fmt)).itemsize
+    total = max((os.path.getsize(ext(path)) - off) // wb, 0)
+    n = max(1, int(float(chunk_mb) * 2**20) // wb)
+    unit = _HIGH_UNIT_US[fmt]
+    whole = total <= 3 * n
+    seekable = fmt in ("evt21", "evt2") and not whole
+    head_end = total if whole else n
+    head = _read_words(path, off, fmt, 0, head_end)
+    name = os.path.splitext(os.path.basename(path))[0]
+
+    # --- whole-file time span: first TIME_HIGHs of the head + last TIME_HIGH of the tail
+    end_us, origin_us, tail = None, None, None
+    if fmt in ("evt21", "evt2"):
+        hidx, hvals = _th_words(fmt, head)
+        hvals = np.maximum.accumulate(hvals) if hvals.size else hvals
+        if seekable:
+            tail = _read_words(path, off, fmt, total - n, total)
+            _, tvals = _th_words(fmt, tail)
+            last_hi = int(tvals.max()) if tvals.size else (int(hvals[-1]) if hvals.size else 0)
+        else:
+            last_hi = int(hvals[-1]) if hvals.size else 0
+        end_us = (last_hi + 1) * unit
+        if hvals.size:
+            # the full decode's pre-roll rule, with the span taken over the whole file
+            look = max(5, hvals.size // 200)
+            d = np.diff(hvals[: look + 1])
+            oi = 0
+            if d.size and hvals.size >= 50:       # as _rawcut._origin_index
+                j = int(np.argmax(d))
+                if int(d[j]) * unit >= _PREROLL_US and int(d[j]) >= (last_hi - int(hvals[0])) // 2:
+                    oi = j + 1
+            origin_us = int(hvals[oi]) * unit
+
+    # --- stage 1: the head, decoded from the file start
+    x, y, p, t = _dec.CHUNK[fmt](head, _dec.init_state(fmt))
+    if len(t):
+        o = np.argsort(t, kind="stable")
+        x, y, p, t = x[o], y[o], p[o], t[o]
+        if origin_us is not None:
+            k = int(np.searchsorted(t, origin_us, side="left"))
+            x, y, p, t = x[k:], y[k:], p[k:], t[k:]
+        else:
+            x, y, p, t = _dec.strip_preroll(x, y, p, t)
+    if not len(t):
+        raise UnsupportedPreview("the first sampled chunk decoded no events")
+    if fmt in ("evt21", "evt2") and not whole:
+        head_cov1 = int(hvals[-1]) * unit             # the trailing period continues past it
+        keep = t < head_cov1
+        x, y, p, t = x[keep], y[keep], p[keep], t[keep]
+    else:
+        head_cov1 = int(t[-1]) + 1
+    width = width or int(x.max()) + 1
+    height = height or int(y.max()) + 1
+    t0_us = int(t[0])
+    if fmt in ("evt21", "evt2"):
+        anchors = np.stack([hidx[:: max(1, hidx.size // _MAX_ANCHORS_PER_CHUNK)],
+                            hvals[:: max(1, hvals.size // _MAX_ANCHORS_PER_CHUNK)] * unit], 1) \
+            if hidx.size else np.zeros((0, 2), np.int64)
+    else:
+        anchors = np.zeros((0, 2), np.int64)
+    full_dur = ((end_us - t0_us) / 1e6) if end_us is not None and not whole else \
+        (head_cov1 - t0_us) / 1e6
+    data = dict(x=np.clip(x, 0, width - 1).astype(np.uint16),
+                y=np.clip(y, 0, height - 1).astype(np.uint16), p=p.astype(np.uint8),
+                t=(t - t0_us).astype(np.int64), t0_us=t0_us, width=width, height=height,
+                n=len(t), n_on=int((p == 1).sum()), fmt=fmt, meta=meta, source_path=path)
+    rec = SampledRecording(data, [(0, head_cov1 - t0_us)], max(full_dur, 1e-6), name, fmt=fmt,
+                           off=off, total_words=total, anchors=anchors,
+                           chunks=[("whole" if whole else "start", 0, head_end * wb)],
+                           duration_known=(end_us is not None) or whole)
+    rec.seekable = seekable
+    if on_stage is not None:
+        on_stage(rec)
+    if not seekable:
+        return rec
+
+    # --- stage 2: the middle and the last chunk, each entered at its first TIME_HIGH
+    m0 = max(n, total // 2 - n // 2)
+    for label, w0, words in (("middle", m0, _read_words(path, off, fmt, m0, m0 + n)),
+                             ("end", total - n, tail)):
+        xs, ys, ps, ts, c0, c1, anc = _decode_entered(fmt, words, w0, total, unit)
+        if anc.size:
+            rec._anchors = np.concatenate([rec._anchors, anc])
+        rec.chunks.append((label, w0 * wb, (w0 + len(words)) * wb))
+        if c1 > c0:
+            rec._insert(xs, ys, ps, ts, c0 - t0_us, c1 - t0_us, None)
+    if on_stage is not None:
+        on_stage(rec)
+    return rec
