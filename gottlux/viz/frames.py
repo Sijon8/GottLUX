@@ -62,11 +62,13 @@ def event_rate_figure(centers_s, rate_hz, title=None, width=theme.COL_DOUBLE):
 
 
 def detection_overlay_figure(frame, targets=None, detections=None, cmap="gray",
-                             title=None, label_freq=True, width=theme.COL_SINGLE):
+                             title=None, label_freq=True, width=theme.COL_SINGLE, max_show=8):
     """Overlay tracked targets (and/or raw detections) on an event frame.
 
     *targets* is a list of :class:`~gottlux.detectors.base.Target`; their boxes are drawn at
-    the latest step with the median flutter frequency labeled. *detections* is a list of
+    the latest step with the median flutter frequency labeled. Only the *max_show* most
+    confident are drawn (``None`` = all): a busy scene yields dozens of candidates, whose
+    labels piled on top of each other and ran off the image. *detections* is a list of
     :class:`~gottlux.core.detect.Detection` drawn as thin boxes.
     """
     import matplotlib.pyplot as plt
@@ -85,6 +87,10 @@ def detection_overlay_figure(frame, targets=None, detections=None, cmap="gray",
         for d in detections:
             ax.add_patch(Rectangle((d.x0, d.y0), d.width, d.height, fill=False,
                                    ec="#26c6da", lw=0.8, alpha=0.7))
+    n_targets = len(targets or ())
+    if targets and max_show is not None and n_targets > max_show:
+        targets = sorted(targets, key=lambda t: -t.confidence)[:max_show]
+        title = (title or "Detections") + f" (top {max_show} of {n_targets})"
     if targets:
         for i, t in enumerate(targets):
             c = colors[i % 10]
@@ -95,11 +101,16 @@ def detection_overlay_figure(frame, targets=None, detections=None, cmap="gray",
             lbl = f"#{t.id}"
             if label_freq and np.isfinite(t.median_freq):
                 lbl += f"  {t.median_freq:.0f} Hz"
-            ax.annotate(lbl, (bb[0], bb[1]), color=c, fontsize=7, ha="left", va="bottom",
-                        xytext=(2, 2), textcoords="offset points",
-                        bbox=dict(boxstyle="round,pad=0.15", fc="black", ec="none", alpha=0.5))
+            # a label near the right edge goes left of its box; all are clipped to the image
+            right = bb[0] > 0.7 * W
+            ann = ax.annotate(lbl, (bb[2] if right else bb[0], bb[1]), color=c, fontsize=7,
+                              ha="right" if right else "left", va="bottom",
+                              xytext=(-2 if right else 2, 2), textcoords="offset points",
+                              bbox=dict(boxstyle="round,pad=0.15", fc="black", ec="none",
+                                        alpha=0.5))
+            ann.set_clip_on(True)
     ax.set_xlim(0, W); ax.set_ylim(H, 0)
     ax.set_xlabel("sensor x (px)"); ax.set_ylabel("sensor y (px)")
-    ax.set_title(title or "Detections")
+    ax.set_title(theme.wrap_title(title or "Detections", width))
     fig.tight_layout()
     return fig

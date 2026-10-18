@@ -46,7 +46,9 @@ def flicker_map_figure(flicker_map, background=None, cmap="turbo", title=None,
     ax.imshow(rgba, origin="upper", extent=[0, W, H, 0], interpolation="nearest")
     ax.set_xlabel("sensor x (px)")
     ax.set_ylabel("sensor y (px)")
-    ax.set_title(title or f"Flicker map  ({fmin:.0f}–{fmax:.0f} Hz)")
+    # the axes sit at fixed figure fractions, so a long run name ran into the colourbar
+    ax.set_title(theme.wrap_title(title or f"Flicker map  ({fmin:.0f}–{fmax:.0f} Hz)",
+                                  0.74 * width))
 
     # annotate the strongest flutter cell
     valid = np.isfinite(fm.dominant_freq)
@@ -62,7 +64,7 @@ def flicker_map_figure(flicker_map, background=None, cmap="turbo", title=None,
     sm = plt.cm.ScalarMappable(cmap=cmap,
                                norm=plt.Normalize(vmin=fmin, vmax=fmax))
     cb = fig.colorbar(sm, cax=cax)
-    cb.set_label("dominant flicker frequency (Hz)")
+    cb.set_label("dominant flicker frequency (Hz)\nopacity = SNR above the noise floor")
     return fig
 
 
@@ -96,7 +98,8 @@ def spectrum_figure(spectrum, title=None, logy=True, width=theme.COL_SINGLE):
     ax.text(0.97, 0.92, f"SNR {sp.snr:.1f}\nharm {sp.harmonic_score:.2f}",
             transform=ax.transAxes, ha="right", va="top", fontsize=8,
             bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="#cccccc", alpha=0.85))
-    ax.legend(loc="upper left")
+    # "best" keeps the legend off the peak marker and the low-frequency rise
+    ax.legend(loc="best", frameon=True, framealpha=0.85, edgecolor="#cccccc")
     fig.tight_layout()
     return fig
 

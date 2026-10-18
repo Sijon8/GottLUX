@@ -55,12 +55,16 @@ def track_timeseries_figure(result, rotating=False, title=None, max_show=8,
     axes[1].set_ylabel("rel. distance\n(1/size)")
     axes[2].set_ylabel("bearing (deg)" if rotating else "elevation (deg)")
     axes[2].set_xlabel("time (s)")
-    axes[0].legend(loc="upper right", ncol=1, fontsize=7)
-    suffix = f" (top {len(targets)} of {n_total})" if n_total > len(targets) else ""
-    axes[0].set_title((title or f"Detector '{result.detector}'") +
-                      f" — {result.n_targets} target(s)" + suffix)
+    shown = (f"top {len(targets)} of {n_total} targets" if n_total > len(targets)
+             else f"{n_total} target(s)")
+    axes[0].set_title(theme.wrap_title(
+        (title or f"Detector '{result.detector}'") + f" — {shown}", width))
     fig.align_ylabels(axes)
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0, 0.80, 1))
+    # one legend for all three panels, beside them: inside the top panel eight entries
+    # covered the frequency traces (the theme draws legends without a frame)
+    fig.legend(*axes[0].get_legend_handles_labels(), loc="upper left",
+               bbox_to_anchor=(0.80, 0.93), fontsize=7, borderaxespad=0.2)
     return fig
 
 
