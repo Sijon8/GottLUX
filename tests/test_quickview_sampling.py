@@ -156,7 +156,8 @@ def test_quickview_opens_large_file_as_samples(raw, monkeypatch, tmp_path):
     def wait(cond, secs=60):
         end = time.time() + secs
         while time.time() < end and not cond():
-            app.processEvents(); time.sleep(0.02)
+            app.processEvents()
+            time.sleep(0.02)
         return cond()
 
     win.load(path)
@@ -173,6 +174,7 @@ def test_worker_outlives_its_owner_and_is_waited_for():
     QtCore = pytest.importorskip("PySide6.QtCore")
     import gc
     import weakref
+
     from gottlux.app import loader
 
     class Slow(loader.Worker):
