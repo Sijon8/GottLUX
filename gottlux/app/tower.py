@@ -22,6 +22,7 @@ from PySide6 import QtCore, QtWidgets
 
 from gottlux.app import icons
 from gottlux.app import style
+from gottlux.app.colorschemes import ColormapCombo
 from gottlux.app.legend import ColorKey
 from gottlux.app.navcube import navcube_container
 from gottlux.app.transport import TransportBar
@@ -35,7 +36,6 @@ try:
 except Exception:                                  # pragma: no cover
     _HAVE_GL = False
 
-_CMAPS = ["inferno", "viridis", "magma", "plasma", "turbo", "cividis"]
 _STYLES = ["bars", "surface"]
 # Background canvas presets. The neutrals stay near-black; the *coloured* presets are lifted
 # enough to actually read as their hue (the earlier values were so dark every choice looked like
@@ -147,7 +147,7 @@ class EventRateTower(QtWidgets.QWidget):
         self.style.setToolTip("Surface (smooth relief) or bars (a cubic bin per cell, height = "
                               "events).")
         self.style.currentIndexChanged.connect(self._on_style)
-        self.cmap = QtWidgets.QComboBox(); self.cmap.addItems(_CMAPS)
+        self.cmap = ColormapCombo()
         self.cmap.setToolTip("Colormap applied by height.")
         self.cmap.currentIndexChanged.connect(self._render)
         self.scale = QtWidgets.QComboBox(); self.scale.addItems(["dynamic", "static"])

@@ -53,6 +53,12 @@ class ParamPanel(QtWidgets.QWidget):
             w.setChecked(bool(p.default))
             w.toggled.connect(self._debounce.start)
             return w
+        if p.kind == "colormap":                 # any colour-registry scheme, live list
+            from gottlux.app.colorschemes import ColormapCombo
+            w = ColormapCombo()
+            w.setCurrentText(str(p.default))
+            w.currentIndexChanged.connect(self._debounce.start)
+            return w
         if p.kind == "choice":
             w = QtWidgets.QComboBox()
             w.addItems([str(c) for c in p.choices])
@@ -69,7 +75,7 @@ class ParamPanel(QtWidgets.QWidget):
             p = self._specs[k]
             if p.kind == "bool":
                 out[k] = ed.isChecked()
-            elif p.kind == "choice":
+            elif p.kind in ("choice", "colormap"):
                 out[k] = ed.currentText()
             else:
                 out[k] = ed.value()
@@ -84,7 +90,7 @@ class ParamPanel(QtWidgets.QWidget):
             blocker = QtCore.QSignalBlocker(ed)
             if p.kind == "bool":
                 ed.setChecked(bool(v))
-            elif p.kind == "choice":
+            elif p.kind in ("choice", "colormap"):
                 ed.setCurrentText(str(v))
             else:
                 ed.set_value(v)

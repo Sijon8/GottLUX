@@ -35,12 +35,9 @@ import numpy as np
 from gottlux.detectors.base import Param
 
 # ------------------------------------------------------------------ colour helpers
-_CUSTOM_RAMPS = {
-    # single-hue blue ramp (sequential: dark = low/early, light = high/late)
-    "ice": ["#0a1a33", "#104281", "#1c5cab", "#2a78d6", "#5598e7", "#86b6ef", "#cde2fb",
-            "#ffffff"],
-    "ember": ["#120404", "#4a0c06", "#8f2306", "#d24a0c", "#f58a1f", "#ffc65a", "#fff3c4"],
-}
+#: The colormaps the web Studio implements too (``web/js/looks.js``). In the desktop app a
+#: colormap parameter accepts any scheme of the colour registry (:mod:`gottlux.core.colors`),
+#: user schemes included.
 COLORMAPS = ("ice", "ember", "inferno", "magma", "viridis", "cividis", "gray", "turbo")
 
 
@@ -49,22 +46,11 @@ def hex_rgb(c: str) -> np.ndarray:
     return np.array([int(c[i:i + 2], 16) for i in (0, 2, 4)], np.float32) / 255.0
 
 
-_LUTS: dict = {}
-
-
 def lut(name: str) -> np.ndarray:
-    """A 256×3 float32 colour table for *name* (custom ramps first, then matplotlib)."""
-    if name not in _LUTS:
-        if name in _CUSTOM_RAMPS:
-            stops = np.stack([hex_rgb(c) for c in _CUSTOM_RAMPS[name]])
-            x = np.linspace(0, 1, len(stops))
-            g = np.linspace(0, 1, 256)
-            table = np.stack([np.interp(g, x, stops[:, i]) for i in range(3)], 1)
-        else:
-            from gottlux.core.tonemap import colormap
-            table = colormap(name, fallback="inferno")(np.linspace(0, 1, 256))[:, :3]
-        _LUTS[name] = np.asarray(table, np.float32)
-    return _LUTS[name]
+    """A 256×3 float32 colour table for *name* (GottLUX and user ramps by their stops,
+    then matplotlib; an unknown name gives inferno)."""
+    from gottlux.core import colors
+    return colors.lut(name, fallback="inferno")
 
 
 def apply_lut(v: np.ndarray, name: str) -> np.ndarray:
@@ -256,7 +242,8 @@ class Heat(Look):
     PARAMS = [
         Param("window_ms", "Window W", 10.0, 0.5, 1000.0, 0.5, unit="ms", group="Look",
               help="Accumulation window behind each frame."),
-        Param("colormap", "Colormap", "inferno", kind="choice", choices=COLORMAPS, group="Look"),
+        Param("colormap", "Colormap", "inferno", kind="colormap", choices=COLORMAPS,
+              group="Look"),
         Param("tone", "Tone map", "sqrt", kind="choice", choices=("linear", "sqrt", "log"),
               group="Look", help="Compresses bright regions so faint motion stays visible."),
         Param("signed", "ON − OFF", False, kind="bool", group="Look",
@@ -302,7 +289,7 @@ class Surface(Look):
         Param("tau_ms", "Decay T", 25.0, 1.0, 1000.0, 0.5, unit="ms", group="Look"),
         Param("color", "Colour by", "polarity", kind="choice", choices=("polarity", "colormap"),
               group="Look", help="Polarity of the last event, or a colormap of recency."),
-        Param("colormap", "Colormap", "ice", kind="choice", choices=COLORMAPS, group="Look"),
+        Param("colormap", "Colormap", "ice", kind="colormap", choices=COLORMAPS, group="Look"),
     ]
 
     def memory_s(self, P):
@@ -329,7 +316,8 @@ class Paint(Look):
                    "brightness = log(events per pixel), hue = when the pixel last fired "
                    "(early → late along the colormap). Flight paths draw themselves.")
     PARAMS = [
-        Param("colormap", "Time colormap", "ice", kind="choice", choices=COLORMAPS, group="Look"),
+        Param("colormap", "Time colormap", "ice", kind="colormap", choices=COLORMAPS,
+              group="Look"),
         Param("min_count", "Min events", 2, 1, 20, 1, "int", group="Look",
               help="Pixels with fewer events stay dark (drops residual shot noise)."),
         Param("fade_s", "Fade after", 0.0, 0.0, 30.0, 0.05, unit="s", group="Look",
@@ -380,7 +368,8 @@ class SpaceTime(Look):
         Param("perspective", "Perspective", 0.35, 0.0, 0.9, 0.05, group="Camera"),
         Param("color", "Colour by", "polarity", kind="choice", choices=("polarity", "age"),
               group="Look"),
-        Param("colormap", "Age colormap", "ice", kind="choice", choices=COLORMAPS, group="Look"),
+        Param("colormap", "Age colormap", "ice", kind="colormap", choices=COLORMAPS,
+              group="Look"),
         Param("box", "Box", True, kind="bool", group="Look", help="Draw the space-time box."),
         Param("point_px", "Point size", 2, 1, 4, 1, "int", unit="px", group="Look"),
         Param("brightness", "Brightness", 1.0, 0.1, 5.0, 0.1, group="Look"),
@@ -837,8 +826,10 @@ def look_specs() -> dict:
         out[name] = {
             "title": look.title, "description": look.description, "native": look.native,
             "heavy": look.heavy,
+            # a desktop "colormap" parameter is a plain choice of the web's own maps
             "params": [{"key": p.key, "label": p.label, "default": p.default, "lo": p.lo,
-                        "hi": p.hi, "step": p.step, "kind": p.kind,
+                        "hi": p.hi, "step": p.step,
+                        "kind": "choice" if p.kind == "colormap" else p.kind,
                         "choices": list(p.choices), "unit": p.unit, "group": p.group,
                         "help": p.help} for p in look.PARAMS],
         }

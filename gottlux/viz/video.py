@@ -21,12 +21,7 @@ from gottlux.core.accumulate import accumulate_frame
 def colorize(frame2d, cmap="inferno", expr="sqrt") -> np.ndarray:
     """Tone-map a 2-D event frame and apply a colormap → an ``(H, W, 3)`` uint8 RGB image."""
     disp, _ = tonemap.compress(np.asarray(frame2d, float), expr=expr)
-    try:
-        import matplotlib
-        rgb = matplotlib.colormaps[cmap](np.clip(disp, 0, 1))[..., :3]
-    except Exception:                              # grayscale fallback if matplotlib/cmap missing
-        rgb = np.repeat(np.clip(disp, 0, 1)[..., None], 3, axis=2)
-    return (rgb * 255).astype(np.uint8)
+    return apply_colormap(disp, cmap)
 
 
 def apply_colormap(disp01, cmap="inferno") -> np.ndarray:
@@ -34,14 +29,17 @@ def apply_colormap(disp01, cmap="inferno") -> np.ndarray:
 
     Unlike :func:`colorize` (which tone-maps raw counts), this takes a value a view has *already*
     mapped (so a faithful capture reuses the view's exact dynamic-range settings).
+
+    One table lookup through the colour registry (:func:`gottlux.core.colors.apply_u8`):
+    the same pixels matplotlib's colormap call gives, without building a float64 RGBA image.
+    User colour schemes work by name; an unknown name falls back to inferno.
     """
+    from gottlux.core import colors
     disp01 = np.clip(np.asarray(disp01, float), 0.0, 1.0)
     try:
-        import matplotlib
-        rgb = matplotlib.colormaps[cmap](disp01)[..., :3]
-    except Exception:
-        rgb = np.repeat(disp01[..., None], 3, axis=2)
-    return (rgb * 255).astype(np.uint8)
+        return colors.apply_u8(disp01, cmap)
+    except Exception:                              # no matplotlib at all: grayscale
+        return (np.repeat(disp01[..., None], 3, axis=2) * 255).astype(np.uint8)
 
 
 def disp_to_rgb(disp, levels=(0.0, 1.0), cmap="inferno") -> np.ndarray:

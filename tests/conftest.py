@@ -10,6 +10,29 @@ import pytest
 from gottlux.synthetic import FlutterTarget, synthetic_scene
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _private_colour_schemes(tmp_path_factory):
+    """Point the colour registry at a file of the session's own, so no test reads or
+    writes the user's real colour schemes (gottlux.core.colors.schemes_path)."""
+    path = tmp_path_factory.mktemp("colors") / "colors.json"
+    old = os.environ.get("GOTTLUX_COLORS")
+    os.environ["GOTTLUX_COLORS"] = str(path)
+    from gottlux.core import colors
+    colors.reload()
+    try:                                       # and remembered GUI choices (export options…)
+        from PySide6 import QtCore             # go to an INI file of the session's own
+        QtCore.QSettings.setDefaultFormat(QtCore.QSettings.IniFormat)
+        QtCore.QSettings.setPath(QtCore.QSettings.IniFormat, QtCore.QSettings.UserScope,
+                                 str(tmp_path_factory.mktemp("qsettings")))
+    except ImportError:
+        pass
+    yield path
+    if old is None:
+        os.environ.pop("GOTTLUX_COLORS", None)
+    else:
+        os.environ["GOTTLUX_COLORS"] = old
+
+
 @pytest.fixture(autouse=True)
 def _free_qt_objects_on_the_gui_thread():
     """After each test, delete the Qt objects it left behind — on the GUI thread.

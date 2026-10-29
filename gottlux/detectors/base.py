@@ -39,7 +39,7 @@ class Param:
     lo: float = 0.0
     hi: float = 1.0
     step: float = 0.0                 # 0 → a sensible (range/100) default in the GUI
-    kind: str = "float"               # 'float' | 'int' | 'bool' | 'choice'
+    kind: str = "float"               # 'float' | 'int' | 'bool' | 'choice' | 'colormap'
     choices: tuple = ()
     unit: str = ""
     help: str = ""
@@ -51,6 +51,9 @@ class Param:
             return bool(v)
         if self.kind == "choice":
             return v if v in self.choices else self.default
+        if self.kind == "colormap":                # any scheme of the colour registry
+            from gottlux.core import colors
+            return v if isinstance(v, str) and colors.has_colormap(v) else self.default
         if self.kind == "int":
             return int(np.clip(int(round(float(v))), self.lo, self.hi))
         return float(np.clip(float(v), self.lo, self.hi))

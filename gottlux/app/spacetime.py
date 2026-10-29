@@ -37,6 +37,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from gottlux.app import icons
 from gottlux.app import style
+from gottlux.app.colorschemes import ColormapCombo
 from gottlux.app.legend import ColorKey
 from gottlux.app.navcube import navcube_container
 from gottlux.app.transport import TransportBar
@@ -51,8 +52,6 @@ except Exception:                                  # pragma: no cover
 
 _COLOR_BY = ["polarity", "time", "density"]   # what the point colour *encodes* (the "mode")
 # Colormaps for the continuous modes (time / density). Polarity is a fixed categorical ON/OFF pair.
-_CMAPS = ["inferno", "viridis", "magma", "plasma", "cividis", "gray", "turbo",
-          "coolwarm", "RdBu", "bwr", "seismic", "PiYG", "Spectral"]
 # Background canvas themes (same palette as the Event-rate tower, so the suite reads
 # consistently). The default entry is not a fixed colour: it follows the app's light/dark
 # instrument theme, so the cloud sits on the same canvas as the rest of the window.
@@ -334,7 +333,7 @@ class SpaceTimeView(QtWidgets.QWidget):
         self.color_by.setToolTip("What the point colour encodes: polarity (ON/OFF), time (recency "
                                  "along the corridor), or local event density.")
         self.color_by.currentIndexChanged.connect(self._on_colorby)
-        self.cmap = QtWidgets.QComboBox(); self.cmap.addItems(_CMAPS)
+        self.cmap = ColormapCombo()
         self.cmap.setToolTip("Colormap for the continuous modes (time / density). The key updates to match.")
         self.cmap.currentIndexChanged.connect(self._on_cmap)
         self.expr = QtWidgets.QComboBox(); self.expr.addItems(tonemap.EXPRESSIONS)

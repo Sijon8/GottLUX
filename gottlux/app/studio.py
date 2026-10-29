@@ -19,9 +19,9 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from gottlux.app import icons, style
+from gottlux.app.colorschemes import PaletteCombo
 from gottlux.studio import (
     FORMATS,
-    PALETTES,
     PRESETS,
     Shot,
     ShotRenderer,
@@ -213,7 +213,9 @@ class StudioPanel(QtWidgets.QWidget):
 
         sty = QtWidgets.QGroupBox("Style")
         yf = QtWidgets.QFormLayout(sty)
-        self.palette_cb = QtWidgets.QComboBox(); self.palette_cb.addItems(list(PALETTES))
+        self.palette_cb = PaletteCombo()
+        self.palette_cb.setToolTip("ON / OFF / background colours. 'Add a colour scheme…' at "
+                                   "the end of the list makes your own palette.")
         yf.addRow("Palette", self.palette_cb)
         self.bloom_sp = self._dspin(0, 3, 2, ""); self.bloom_sp.setSingleStep(0.1)
         yf.addRow("Bloom", self.bloom_sp)

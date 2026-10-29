@@ -27,14 +27,13 @@ import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from gottlux.app import icons
+from gottlux.app.colorschemes import ColormapCombo, pg_colormap
 from gottlux.app.loader import RecordingLoader
 from gottlux.app.transport import TimeController, TransportBar
 from gottlux.core import tonemap
 from gottlux.core.accumulate import accumulate_frame
 
 _MODES = ["count", "time_surface", "polarity", "polarity_ratio", "on", "off", "binary"]
-_CMAPS = ["inferno", "viridis", "magma", "plasma", "cividis", "gray", "turbo",
-          "coolwarm", "RdBu", "bwr", "seismic", "PiYG", "Spectral"]
 _DIVERGING = {"coolwarm", "RdBu", "bwr", "seismic", "PiYG", "Spectral"}
 _POLARITY_MODES = {"polarity", "polarity_ratio"}
 _CTRL_W = 196        # width of the right-hand per-clip control column (px)
@@ -145,7 +144,7 @@ class ClipPane(QtWidgets.QFrame):
         self.mode.setToolTip("Accumulation mode: count / time-surface / polarity (raw ON−OFF) / "
                              "polarity_ratio ((ON−OFF)/(ON+OFF) ∈ [−1,1], bounded) / on / off / binary.")
         self.mode.currentIndexChanged.connect(self._on_mode)
-        self.cmap = QtWidgets.QComboBox(); self.cmap.addItems(_CMAPS); self.cmap.setCurrentText(default_cmap)
+        self.cmap = ColormapCombo(); self.cmap.setCurrentText(default_cmap)
         self.cmap.currentIndexChanged.connect(self._apply_cmap)
         self.expr = QtWidgets.QComboBox(); self.expr.addItems(tonemap.EXPRESSIONS); self.expr.setCurrentText("sqrt")
         self.expr.currentIndexChanged.connect(self._render)
@@ -285,7 +284,7 @@ class ClipPane(QtWidgets.QFrame):
 
     def _apply_cmap(self, *_):
         try:
-            cm = pg.colormap.get(self.cmap.currentText(), source="matplotlib")
+            cm = pg_colormap(self.cmap.currentText())
             self.img.setColorMap(cm)
         except Exception:
             pass
@@ -352,7 +351,7 @@ class ClipPane(QtWidgets.QFrame):
 
     def _to_rgb(self, disp, levels):
         try:
-            cm = pg.colormap.get(self.cmap.currentText(), source="matplotlib")
+            cm = pg_colormap(self.cmap.currentText())
             lut = cm.getLookupTable(nPts=256, alpha=False)
             lo, hi = levels
             idx = np.clip((np.asarray(disp) - lo) / (hi - lo + 1e-12) * 255, 0, 255).astype(np.uint8)

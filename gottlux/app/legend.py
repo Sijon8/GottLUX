@@ -24,9 +24,11 @@ from gottlux.app import style
 
 
 def _cmap(name):
-    """A pyqtgraph ColorMap from a matplotlib name (with a safe fallback)."""
+    """A pyqtgraph ColorMap for any colour-registry name — matplotlib's, GottLUX's or a
+    user scheme (with a safe fallback)."""
     try:
-        return pg.colormap.get(name, source="matplotlib")
+        from gottlux.app.colorschemes import pg_colormap
+        return pg_colormap(name)
     except Exception:
         return pg.colormap.get("viridis")
 

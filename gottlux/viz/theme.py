@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import matplotlib as mpl
 import numpy as np
-from matplotlib.colors import LinearSegmentedColormap
+
 
 # Standard journal column widths (inches).
 COL_SINGLE = 3.5
@@ -62,23 +62,12 @@ def figure(width: float = COL_SINGLE, height: float | None = None, **kw):
 
 # ------------------------------------------------------------------ colormaps
 def _register_colormaps():
-    try:
-        mpl.colormaps["gottlux_events"]
-        return                                     # already registered
-    except KeyError:
-        pass
-    # Event map: deep navy → magenta → amber → white. Good contrast on dark backgrounds.
-    ev = LinearSegmentedColormap.from_list(
-        "gottlux_events",
-        ["#05060f", "#1a1145", "#6a1b9a", "#d81b60", "#ff8f00", "#fff3c4", "#ffffff"])
-    # Diverging polarity map: blue (OFF) → black → red (ON).
-    pol = LinearSegmentedColormap.from_list(
-        "gottlux_polarity", ["#2962ff", "#0a0a14", "#ff1744"])
-    for name, cmap in (("gottlux_events", ev), ("gottlux_polarity", pol)):
-        try:
-            mpl.colormaps.register(cmap, name=name)
-        except Exception:
-            pass
+    """GottLUX's ramps — ``gottlux_events`` (deep navy → magenta → amber → white, for event
+    imagery on dark backgrounds), ``gottlux_polarity`` (blue OFF → black → red ON), ``ice``,
+    ``ember`` — and every user colour scheme are registered with matplotlib by the colour
+    registry, :mod:`gottlux.core.colors`, on import."""
+    from gottlux.core import colors
+    colors.colormap_names()                        # also loads the user's schemes
 
 
 def flicker_rgba(freq_map, snr_map, fmin, fmax, cmap="turbo", snr_ref=None, snr_floor=None):

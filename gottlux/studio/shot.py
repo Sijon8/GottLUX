@@ -24,17 +24,13 @@ import json
 import math
 from dataclasses import asdict, dataclass, field
 
-# ON/OFF colour pairs + background. "fire-ice" is the default: the orange/blue pair that
-# passes the colour-vision checks on its background (OKLab ΔE 26.7 under protanopia).
-PALETTES = {
-    "fire-ice":  {"on": "#ff7a3d", "off": "#3f97ff", "bg": "#05070a"},
-    "ember":     {"on": "#ffb347", "off": "#c2185b", "bg": "#07040a"},
-    "aurora":    {"on": "#7cf5c4", "off": "#8a6cff", "bg": "#03060a"},
-    "gottlux":   {"on": "#39c5cf", "off": "#39c5cf", "bg": "#05080b"},
-    "mono":      {"on": "#ffffff", "off": "#ffffff", "bg": "#000000"},
-    "paper":     {"on": "#1a1a19", "off": "#1a1a19", "bg": "#f6f5f1"},
-    "print":     {"on": "#c0392b", "off": "#1f5fbf", "bg": "#fcfcfb"},
-}
+from gottlux.core import colors as _colors
+
+# ON/OFF colour pairs + background — the built-in palettes of the colour registry
+# (gottlux.core.colors), where user palettes are added too. "fire-ice" is the default: the
+# orange/blue pair that passes the colour-vision checks on its background (OKLab ΔE 26.7
+# under protanopia).
+PALETTES = _colors.BUILTIN_PALETTES
 
 # output presets: (format, width px, fps)
 PRESETS = {
@@ -91,7 +87,7 @@ class Shot:
         return max(1, int(math.floor((t1 - t0) * self.fps / max(self.speed, 1e-6) + 0.5)))
 
     def colors(self) -> dict:
-        return PALETTES.get(self.palette, PALETTES["fire-ice"])
+        return _colors.palette(self.palette)
 
     # ------------------------------------------------------------------ (de)serialise
     def to_dict(self) -> dict:

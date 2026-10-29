@@ -17,6 +17,7 @@ from PySide6 import QtCore, QtWidgets
 
 from gottlux.app import icons
 from gottlux.app import style
+from gottlux.app.colorschemes import ColormapCombo, pg_colormap
 from gottlux.app.legend import make_colorbar
 from gottlux.app.transport import TransportBar
 from gottlux.core import tonemap
@@ -24,8 +25,6 @@ from gottlux.core.accumulate import accumulate_frame
 
 _MODES = ["count", "time_surface", "polarity", "polarity_ratio", "on", "off", "binary"]
 # Sequential maps for magnitude views; diverging maps for the polarity (signed) views.
-_CMAPS = ["inferno", "viridis", "magma", "plasma", "cividis", "gray", "turbo",
-          "coolwarm", "RdBu", "bwr", "seismic", "PiYG", "Spectral"]
 _DIVERGING = {"coolwarm", "RdBu", "bwr", "seismic", "PiYG", "Spectral"}
 _POLARITY_MODES = {"polarity", "polarity_ratio"}
 _CLABEL = {"count": "events / pixel", "on": "ON events / px", "off": "OFF events / px",
@@ -61,7 +60,7 @@ class LiveViewer(QtWidgets.QWidget):
         self.transport = TransportBar(self.ctl, host=self)
         self.mode = QtWidgets.QComboBox(); self.mode.addItems(_MODES)
         self.mode.currentIndexChanged.connect(self._on_mode)
-        self.cmap = QtWidgets.QComboBox(); self.cmap.addItems(_CMAPS)
+        self.cmap = ColormapCombo()
         self.cmap.currentIndexChanged.connect(self._apply_cmap)
         self.mode.setToolTip("How events map to pixel value: count, time-surface (sharp motion), "
                              "polarity (ON−OFF, raw signed count), polarity_ratio "
@@ -211,7 +210,7 @@ class LiveViewer(QtWidgets.QWidget):
     # ------------------------------------------------------------------ colormap
     def _apply_cmap(self, *_):
         try:
-            cm = pg.colormap.get(self.cmap.currentText(), source="matplotlib")
+            cm = pg_colormap(self.cmap.currentText())
             self.img.setColorMap(cm)
             self.cbar.setColorMap(cm)
         except Exception:

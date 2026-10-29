@@ -59,11 +59,8 @@ def colormap(name, fallback: str = "viridis"):
     lookups happen inside a Qt ``paintEvent``, where an escaping exception does not fail
     politely: PySide6 aborts the process.
     """
-    import matplotlib
-    try:
-        return matplotlib.colormaps[name]
-    except (KeyError, TypeError):
-        return matplotlib.colormaps[fallback]
+    from gottlux.core import colors              # registers GottLUX + user schemes
+    return colors.mpl_colormap(name, fallback)
 
 
 def reference_white(frame, clip_pct: float = 99.5) -> float:

@@ -176,7 +176,19 @@ def _colormap(name):
         g = np.linspace(0, 1, 256); return np.stack([g * 0.2, g, g * 0.3], 1)
     if name == "_ice":
         g = np.linspace(0, 1, 256); return np.stack([g * 0.2, g * 0.8, np.ones_like(g)], 1)
-    return _mpl_colormaps[name](np.linspace(0, 1, 256))[:, :3]
+    from gottlux.core import colors       # user schemes resolve by name too
+    return colors.mpl_colormap(name)(np.linspace(0, 1, 256))[:, :3]
+
+
+def player_themes() -> dict:
+    """The player's colour themes: its own presets, then every colour-registry colormap
+    (user schemes included) under its own name."""
+    from gottlux.core import colors
+    out = dict(PLAYER_THEMES)
+    for name in colors.colormap_names():
+        if name not in out.values():
+            out[name] = name
+    return out
 
 
 # ── Inline chrome ────────────────────────────────────────────────────────────
@@ -551,7 +563,9 @@ class Player(QtWidgets.QWidget):
                                 "Unchecked: density-scaled single colormap (better for dim scenes).")
         self.raw_chk.toggled.connect(self._raw_toggled); row.addWidget(self.raw_chk)
         row.addWidget(QtWidgets.QLabel("theme:"))
-        self.theme = QtWidgets.QComboBox(); self.theme.addItems(PLAYER_THEMES.keys())
+        self.theme = QtWidgets.QComboBox(); self.theme.addItems(player_themes().keys())
+        from gottlux.core import colors as _colors
+        _colors.subscribe(self._refresh_themes)
         self.theme.setToolTip("Colormap for the scaled view.")
         self.theme.currentTextChanged.connect(self._theme_changed); row.addWidget(self.theme)
         v.addLayout(row)
@@ -1058,7 +1072,22 @@ class Player(QtWidgets.QWidget):
         if not self.mapall_chk.isChecked(): self._render(self.current_t())
     def _mapall_toggled(self, on):
         self.mapwin_sl.setEnabled(not on); self.mapwin_sp.setEnabled(not on); self._render(self.current_t())
-    def _theme_changed(self, name): self.cmap = _colormap(PLAYER_THEMES[name]); self._render(self.current_t())
+    def _theme_changed(self, name):
+        themes = player_themes()
+        self.cmap = _colormap(themes.get(name, "inferno")); self._render(self.current_t())
+
+    def _refresh_themes(self):
+        """A colour scheme was added or removed: offer it without losing the selection."""
+        try:
+            cur = self.theme.currentText()
+            b = QtCore.QSignalBlocker(self.theme)
+            self.theme.clear(); self.theme.addItems(player_themes().keys())
+            i = self.theme.findText(cur)
+            self.theme.setCurrentIndex(max(i, 0))
+            del b
+        except RuntimeError:
+            from gottlux.core import colors as _colors
+            _colors.unsubscribe(self._refresh_themes)
     def _raw_toggled(self, on): self.raw_mode = on; self._render(self.current_t())
     def _scrubbed(self, v): self._pt = self.current_t(); self.scrubbed.emit(v); self._render(self.current_t())
 

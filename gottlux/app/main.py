@@ -267,10 +267,19 @@ class MainWindow(QtWidgets.QMainWindow):
         tm = self.menuBar().addMenu("&Tools")
         act_canvas = QtGui.QAction(icons.icon("split"), "Canvas composer…", self)
         act_canvas.setToolTip("Compose several recordings — possibly different sensors and "
-                              "time bases — as positioned, styled cells on one canvas; play "
-                              "it, save the spec, export as MP4 or a composited .raw.")
+                              "time bases — as positioned cells on one canvas, each with its "
+                              "own visualization (event frame or any Studio look); play it, "
+                              "save the spec, export as MP4 / WebM / GIF or a composited "
+                              ".raw.")
         act_canvas.triggered.connect(self._open_canvas_composer)
         tm.addAction(act_canvas)
+        act_colors = QtGui.QAction(icons.icon("add"), "Colour schemes…", self)
+        act_colors.setToolTip("Make your own colormaps (from colour stops) and ON/OFF "
+                              "palettes, or import/export them as .json. They appear in every "
+                              "colour picker at once — viewer, canvas cells, timeline, Studio.")
+        act_colors.triggered.connect(self._open_color_schemes)
+        tm.addAction(act_colors)
+        tm.addSeparator()
         act_script = QtGui.QAction(icons.icon("target"),
                                    "Run user script on current view…", self)
         act_script.setToolTip("Run a .py file defining process(win, ctx) on exactly the "
@@ -286,6 +295,13 @@ class MainWindow(QtWidgets.QMainWindow):
         act_bundle.triggered.connect(self._export_tool_bundle)
         tm.addAction(act_bundle)
         self.tools_menu = tm
+
+    def _open_color_schemes(self):
+        """The colour-scheme editor (user colormaps and ON/OFF palettes)."""
+        from gottlux.app.colorschemes import ColorSchemesDialog
+        dlg = ColorSchemesDialog(self)
+        dlg.exec()
+        return dlg
 
     # ------------------------------------------------------------------ theme
     @staticmethod
