@@ -140,3 +140,27 @@ def test_colormap_params_accept_registry_names_and_web_spec_stays_a_choice(schem
     spec = look_specs()["heat"]["params"]
     cm = next(p for p in spec if p["key"] == "colormap")
     assert cm["kind"] == "choice" and "deep sea" not in cm["choices"]
+
+
+def test_scheme_editor_saves_a_colormap_every_picker_offers(schemes):
+    pytest.importorskip("PySide6")
+    from PySide6 import QtWidgets
+    QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    from gottlux.app.colorschemes import ColormapCombo, ColorSchemesDialog, PaletteCombo
+    combo, pals = ColormapCombo(), PaletteCombo()
+    dlg = ColorSchemesDialog()
+    assert len(dlg._stops) >= 2                       # a built-in loads as editable stops
+    dlg.map_name.setText("my ramp")
+    dlg._set_stops(["#000000", "#336699", "#ffffff"])
+    dlg._reverse()
+    dlg._save_map()
+    assert colors.colormap_stops("my ramp") == ["#ffffff", "#336699", "#000000"]
+    assert dlg.last_created("colormap") == "my ramp" and "my ramp" in combo.names()
+    dlg.pal_name.setText("my pal")
+    dlg._save_pal()
+    assert "my pal" in pals.names()
+    row = colors.colormap_names().index("my ramp")
+    dlg.map_list.setCurrentRow(row)
+    dlg._delete_map()
+    assert "my ramp" not in combo.names()
+    dlg.close()

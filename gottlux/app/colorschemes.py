@@ -347,10 +347,10 @@ class ColorSchemesDialog(QtWidgets.QDialog):
                                                 "   (built-in)"))
             it.setData(QtCore.Qt.UserRole, n)
             self.map_list.addItem(it)
-        del b
         names = colors.colormap_names()
         row = names.index(select) if select in names else 0
-        self.map_list.setCurrentRow(row)
+        self.map_list.setCurrentRow(row)              # still blocked: load exactly once
+        del b
         self._load_map(row)
 
     def _map_at(self, row):
@@ -375,8 +375,11 @@ class ColorSchemesDialog(QtWidgets.QDialog):
 
     def _set_stops(self, stops):
         while self._stops:
-            self._stop_box.removeWidget(self._stops[-1])
-            self._stops.pop().deleteLater()
+            btn = self._stops.pop()
+            self._stop_box.removeWidget(btn)
+            btn.hide()                        # gone now, not when the deletion runs
+            btn.setParent(None)
+            btn.deleteLater()
         for c in stops:
             self._add_stop(c, update=False)
         self._update_preview()
@@ -395,6 +398,8 @@ class ColorSchemesDialog(QtWidgets.QDialog):
         if len(self._stops) > 2:
             btn = self._stops.pop()
             self._stop_box.removeWidget(btn)
+            btn.hide()
+            btn.setParent(None)
             btn.deleteLater()
             self._update_preview()
 
@@ -462,10 +467,10 @@ class ColorSchemesDialog(QtWidgets.QDialog):
                                                 "   (built-in)"))
             it.setData(QtCore.Qt.UserRole, n)
             self.pal_list.addItem(it)
-        del b
         names = colors.palette_names()
         row = names.index(select) if select in names else 0
         self.pal_list.setCurrentRow(row)
+        del b
         self._load_pal(row)
 
     def _load_pal(self, row):

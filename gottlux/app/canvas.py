@@ -249,6 +249,43 @@ def values_from_text_item(txt: engine.CanvasText) -> dict:
             "t0_s": t0, "margin_px": int(txt.margin_px)}
 
 
+class VisualizationGridDialog(QtWidgets.QDialog):
+    """Pick the visualizations a clip is shown as, side by side on the canvas."""
+
+    def __init__(self, parent=None, preset=("", "trails", "surface", "spacetime")):
+        super().__init__(parent)
+        self.setWindowTitle("Visualization grid")
+        from gottlux.app.cellstyle import look_choices
+        lay = QtWidgets.QVBoxLayout(self)
+        intro = QtWidgets.QLabel("Show the selected clip as several visualizations at once. "
+                                 "Each becomes a cell of its own (same clip, same clock), "
+                                 "tiled over the canvas; edit any of them afterwards.")
+        intro.setWordWrap(True)
+        lay.addWidget(intro)
+        self.list = QtWidgets.QListWidget()
+        for name, title in look_choices():
+            it = QtWidgets.QListWidgetItem(title)
+            it.setData(QtCore.Qt.UserRole, name)
+            it.setFlags(it.flags() | QtCore.Qt.ItemIsUserCheckable)
+            it.setCheckState(QtCore.Qt.Checked if name in preset else QtCore.Qt.Unchecked)
+            self.list.addItem(it)
+        lay.addWidget(self.list, 1)
+        self.chk_labels = QtWidgets.QCheckBox("Label each cell with its visualization")
+        self.chk_labels.setChecked(True)
+        lay.addWidget(self.chk_labels)
+        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok
+                                        | QtWidgets.QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    def looks(self) -> list:
+        return [self.list.item(i).data(QtCore.Qt.UserRole) for i in range(self.list.count())
+                if self.list.item(i).checkState() == QtCore.Qt.Checked]
+
+    def labels(self) -> bool:
+        return self.chk_labels.isChecked()
+
+
 class _CellItem(QtWidgets.QGraphicsItem):
     """One clip's cell on the canvas scene: movable by drag, resizable by its corner grip.
 
@@ -303,9 +340,11 @@ class _CellItem(QtWidgets.QGraphicsItem):
         p.fillRect(grip, chrome)
         # The cell's name is chrome sitting on *content* (a rendered event frame), so it
         # gets its own panel-coloured plate — theme foreground straight onto the frame
-        # would be unreadable on whichever of the two themes fights the imagery.
+        # would be unreadable on whichever of the two themes fights the imagery. It sits at
+        # the bottom-left: the top-left is where a cell's own label and time stamp render.
         f = p.font(); f.setPointSizeF(8.0); p.setFont(f)
-        plate = QtCore.QRectF(2, 2, p.fontMetrics().horizontalAdvance(self.name) + 8, 13)
+        plate = QtCore.QRectF(2, max(self.cell_h - 15, 2),
+                              p.fontMetrics().horizontalAdvance(self.name) + 8, 13)
         bg = QtGui.QColor(style.PANEL); bg.setAlpha(220)
         p.fillRect(plate, bg)
         p.setPen(QtGui.QPen(QtGui.QColor(style.FG)))
@@ -577,9 +616,18 @@ class CanvasComposerWindow(QtWidgets.QMainWindow):
             sp.setToolTip("Canvas size in pixels. A .raw export needs ≤ "
                           f"{engine.MAX_RAW_DIM} px per side (EVT2.1 coordinate range).")
             sp.valueChanged.connect(self._on_canvas_size)
+        self.canvas_preset = QtWidgets.QComboBox()
+        self.canvas_preset.addItem("Size…")
+        for label, size in engine.CANVAS_PRESETS:
+            if isinstance(size, tuple):
+                self.canvas_preset.addItem(label, size)
+        self.canvas_preset.setToolTip("A standard canvas size; every cell keeps its place "
+                                      "and proportion on the new canvas.")
+        self.canvas_preset.activated.connect(self._on_canvas_preset)
         row = QtWidgets.QHBoxLayout()
         row.addWidget(QtWidgets.QLabel("W")); row.addWidget(self.canvas_w)
         row.addWidget(QtWidgets.QLabel("H")); row.addWidget(self.canvas_h)
+        row.addWidget(self.canvas_preset)
         row.addStretch(1)
         g_canvas.setLayout(row)
         v.addWidget(g_canvas)
@@ -602,10 +650,26 @@ class CanvasComposerWindow(QtWidgets.QMainWindow):
         rm_btn = QtWidgets.QPushButton("Remove"); rm_btn.setIcon(icons.icon("close"))
         rm_btn.setToolTip("Remove the selected clip or title from the canvas.")
         rm_btn.clicked.connect(self._remove_selected)
+        grid_btn = QtWidgets.QPushButton("Visualization grid…")
+        grid_btn.setToolTip("Show the selected clip as several visualizations side by side: "
+                            "pick the looks, and one cell per look is tiled over the canvas, "
+                            "labelled, all on the same clock.")
+        grid_btn.clicked.connect(self._visualization_grid_dialog)
+        dup_btn = QtWidgets.QPushButton("Duplicate")
+        dup_btn.setToolTip("Copy the selected cell (same clip and settings) — then give the "
+                           "copy another visualization.")
+        dup_btn.clicked.connect(self._duplicate_selected)
+        tile_btn = QtWidgets.QPushButton("Auto-tile")
+        tile_btn.setToolTip("Lay every cell into the best-fit grid over the canvas.")
+        tile_btn.clicked.connect(self.autotile)
+        self._needs_cell = [grid_btn, dup_btn, rm_btn]
         cl = QtWidgets.QVBoxLayout()
         cl.addWidget(self.clip_list)
         h = QtWidgets.QHBoxLayout()
         h.addWidget(add_btn); h.addWidget(title_btn); h.addWidget(rm_btn); h.addStretch(1)
+        cl.addLayout(h)
+        h = QtWidgets.QHBoxLayout()
+        h.addWidget(grid_btn, 2); h.addWidget(dup_btn, 1); h.addWidget(tile_btn, 1)
         cl.addLayout(h)
         g_clips.setLayout(cl)
         v.addWidget(g_clips)
@@ -717,7 +781,14 @@ class CanvasComposerWindow(QtWidgets.QMainWindow):
         """Add *rec* as a new cell. *source* defaults to the recording's path or name
         (uniquified); *rect* defaults to a cascaded placement at the sensor's size,
         scaled down if it would not fit the canvas. Returns the new :class:`CanvasClip`."""
-        key = self._unique_source(source or rec.source_path or rec.name)
+        want = source or rec.source_path or rec.name
+        same = self.recs.get(want)
+        if same is not None and (same is rec or (rec.source_path and os.path.normcase(
+                os.path.abspath(rec.source_path)) == os.path.normcase(os.path.abspath(
+                    getattr(same, "source_path", "") or "")))):
+            key = want                    # the same recording again: one source, two cells
+        else:
+            key = self._unique_source(want)
         self.recs[key] = rec
         if rect is None:
             n = len(self.spec.clips)
@@ -736,6 +807,80 @@ class CanvasComposerWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(
             f"Added {rec.name} — {len(self.spec.clips)} clip(s) on the canvas.")
         return clip
+
+    def add_visualization_grid(self, index: int, looks, labels: bool = True) -> list:
+        """Show cell *index*'s clip as one cell per look in *looks* (``""`` = the event
+        frame), on the same clip and clock, tiled over the canvas with labels. The cell
+        itself takes the first look; returns the cells of the grid."""
+        if not (0 <= index < len(self.spec.clips)) or not looks:
+            return []
+        from gottlux.studio.looks import get_look
+        base = self.spec.clips[index]
+        base_look, base_params = base.look or "", dict(base.look_params or {})
+        cells = []
+        for n, look in enumerate(looks):
+            cell = base if n == 0 else engine.CanvasClip.from_dict(base.to_dict())
+            cell.look = look or ""
+            cell.look_params = dict(base_params) if cell.look == base_look else {}
+            if cell.look and not base_look:
+                cell.denoise = True                # a look starts as the Studio does
+            cell.fit = "fit"
+            if labels:
+                cell.label = get_look(look).title if look else "Event frame"
+            if n:
+                self.spec.clips.insert(index + n, cell)
+            cells.append(cell)
+        self.autotile()
+        self.clip_list.setCurrentRow(index)
+        self.statusBar().showMessage(
+            f"{len(cells)} visualizations of {self.recs[base.source].name} side by side.")
+        return cells
+
+    def _visualization_grid_dialog(self):
+        i = self.clip_list.currentRow()
+        if not (0 <= i < len(self.spec.clips)):
+            QtWidgets.QMessageBox.information(self, "Visualization grid",
+                                              "Select a clip first.")
+            return
+        dlg = VisualizationGridDialog(self)
+        if dlg.exec() == QtWidgets.QDialog.Accepted and dlg.looks():
+            self.add_visualization_grid(i, dlg.looks(), labels=dlg.labels())
+
+    def _duplicate_selected(self):
+        i = self.clip_list.currentRow()
+        if not (0 <= i < len(self.spec.clips)):
+            return
+        copy = engine.CanvasClip.from_dict(self.spec.clips[i].to_dict())
+        x, y, w, h = copy.rect
+        copy.rect = (min(x + 24, max(self.spec.width - w, 0)),
+                     min(y + 24, max(self.spec.height - h, 0)), w, h)
+        self.spec.clips.insert(i + 1, copy)
+        self._rebuild()
+        self.clip_list.setCurrentRow(i + 1)
+
+    def autotile(self):
+        """Lay every cell into the best-fit grid over the canvas (in list order)."""
+        rects = engine.autotile(len(self.spec.clips), (self.spec.width, self.spec.height))
+        for clip, rect in zip(self.spec.clips, rects, strict=True):
+            clip.rect = rect
+        self._rebuild()
+
+    def _on_canvas_preset(self, i):
+        size = self.canvas_preset.itemData(i)
+        b = QtCore.QSignalBlocker(self.canvas_preset)
+        self.canvas_preset.setCurrentIndex(0)
+        del b
+        if not size:
+            return
+        scaled = engine.rescale_spec(self.spec, size)
+        for clip, new in zip(self.spec.clips, scaled.clips, strict=True):
+            clip.rect = new.rect
+        for sp, val in ((self.canvas_w, size[0]), (self.canvas_h, size[1])):
+            b = QtCore.QSignalBlocker(sp)
+            sp.setValue(int(val))
+            del b
+        self._on_canvas_size()
+        self._rebuild()
 
     def _add_clips_dialog(self):
         paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
@@ -880,7 +1025,10 @@ class CanvasComposerWindow(QtWidgets.QMainWindow):
         self._load_panel(index)
 
     def _on_list_selection(self, row):
-        if not (0 <= row < len(self.spec.clips)):
+        is_cell = 0 <= row < len(self.spec.clips)
+        for b in getattr(self, "_needs_cell", ()):
+            b.setEnabled(is_cell or (b.text() == "Remove" and row >= 0))
+        if not is_cell:
             self._sel_group.setEnabled(False)
             return
         self._sel_group.setEnabled(True)
@@ -963,7 +1111,13 @@ class CanvasComposerWindow(QtWidgets.QMainWindow):
         if not path.endswith(".json"):
             path += engine.SPEC_SUFFIX
         engine.save_spec(self.spec, path)
-        self.statusBar().showMessage(f"Saved composition → {path}")
+        unsaved = sorted({c.source for c in self.spec.clips
+                          if not os.path.exists(c.source)})
+        msg = f"Saved composition → {path}"
+        if unsaved:                       # cells whose recording has no file cannot reload
+            msg += (f" — note: {len(unsaved)} source(s) have no file on disk and will not "
+                    "reload: " + ", ".join(unsaved))
+        self.statusBar().showMessage(msg)
 
     def _load_composition(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -981,6 +1135,12 @@ class CanvasComposerWindow(QtWidgets.QMainWindow):
         dropped (reported in the status bar) rather than blocking the rest."""
         import gottlux as eb
         spec = engine.load_spec(path)
+        base = os.path.dirname(os.path.abspath(path))
+        for clip in spec.clips:           # a source may be given relative to the spec
+            if not os.path.isabs(clip.source) and not os.path.exists(clip.source):
+                cand = os.path.join(base, clip.source)
+                if os.path.exists(cand):
+                    clip.source = cand
         recs, kept, missing = {}, [], []
         for clip in spec.clips:
             if clip.source in recs:
