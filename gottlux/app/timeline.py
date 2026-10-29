@@ -24,8 +24,10 @@ Mosaics are edited **in place**: selecting a canvas block turns the preview view
 an arrange stage (:class:`~gottlux.app.canvas.CanvasArrangeView`, the same widget the
 pop-out Canvas composer uses) where cells are dragged and resized, while the right-hand
 deck edits the selected cell's EBS settings. The deck edits a plain clip the same way —
-its one full-frame cell — so different clips on one timeline can carry different colormaps,
-tone-maps, accumulation windows and modes, exactly as mosaic cells do.
+its one full-frame cell — so different clips on one timeline can carry different
+visualizations: the classic event frame with its own colormap, tone-map, accumulation
+window and mode, or any Studio look (trails, time surface, space-time cloud, stroboscope,
+…) with a label and time stamp (:mod:`gottlux.app.cellstyle`), exactly as mosaic cells do.
 
 Sizes are explicit rather than guessed: a **project canvas** preset (Native / 640×640 /
 1280×720 / 1920×1080 / 1024×1024 / Custom) sets the preview and export geometry, and a
@@ -33,7 +35,9 @@ selected cell takes exact **fractions** of it (Full, 1/2, 1/3, 1/4 quadrant, 2/3
 optional 1/12-grid snapping and an auto-tile button. All of that geometry math lives in
 :mod:`gottlux.core.canvas` where it is pure and tested.
 
-Exports: **Export video…** renders the whole program (segments + overlays + titles);
+Exports: **Export video…** renders the whole program (segments + overlays + titles) as
+MP4, WebM or GIF at the frame rate, size and quality chosen in the deck, off the GUI thread
+with a Cancel button (:mod:`gottlux.app.videoexport`);
 **Export .raw…** stays events-only — a plain sequence stitches through
 :func:`gottlux.io.writer.stitch_clips` exactly as before (trim + crop + gap, one monotonic
 clock), a timeline containing canvas blocks composites events into the canvas geometry
@@ -60,20 +64,16 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from gottlux.app import icons
 from gottlux.app import style
+from gottlux.app import videoexport
 from gottlux.app.canvas import (CanvasArrangeView, TitleDialog, droppable_paths,
                                 text_item_from_values, to_pixmap)
+from gottlux.app.cellstyle import CellStyleEditor
 from gottlux.app.transport import TimeController, TransportBar
 from gottlux.app.uikit import plot_with_deck, with_progress
 from gottlux.core import canvas as engine
-from gottlux.core import tonemap
 
 #: The empty timeline's placeholder line — the drag-and-drop affordance.
 _DROP_HINT = "Drop recordings here, or Add clips…"
-
-#: Accumulation modes and colormaps offered per clip / per cell (the composer's set).
-_MODES = ["count", "time_surface", "polarity", "polarity_ratio", "on", "off", "binary"]
-_CMAPS = ["inferno", "viridis", "magma", "plasma", "cividis", "gray", "turbo",
-          "coolwarm", "RdBu", "bwr", "seismic", "PiYG", "Spectral"]
 
 #: Lane-block thumbnail height, in pixels (rendered once per clip, then cached).
 _THUMB_H = 64
@@ -840,32 +840,14 @@ class TimelineEditor(QtWidgets.QWidget):
         # --- the visualization settings of whatever cell is selected ---
         g_look = QtWidgets.QGroupBox("Visualization")
         form = QtWidgets.QFormLayout()
-        self.cb_mode = QtWidgets.QComboBox(); self.cb_mode.addItems(_MODES)
-        self.cb_mode.setToolTip("Accumulation mode for this clip/cell (count, polarity, …).")
-        self.cb_mode.currentIndexChanged.connect(self._apply_settings)
-        form.addRow("Mode", self.cb_mode)
-        self.cb_cmap = QtWidgets.QComboBox(); self.cb_cmap.addItems(_CMAPS)
-        self.cb_cmap.setToolTip("Colormap for this clip/cell.")
-        self.cb_cmap.currentIndexChanged.connect(self._apply_settings)
-        form.addRow("Color", self.cb_cmap)
-        self.cb_tone = QtWidgets.QComboBox(); self.cb_tone.addItems(tonemap.EXPRESSIONS)
-        self.cb_tone.setCurrentText("sqrt")
-        self.cb_tone.currentIndexChanged.connect(self._apply_settings)
-        self.sp_gamma = QtWidgets.QDoubleSpinBox()
-        self.sp_gamma.setRange(0.1, 3.0); self.sp_gamma.setSingleStep(0.05)
-        self.sp_gamma.setValue(0.5); self.sp_gamma.setPrefix("γ ")
-        self.sp_gamma.setToolTip("Exponent for the 'gamma' expression.")
-        self.sp_gamma.valueChanged.connect(self._apply_settings)
-        row = QtWidgets.QHBoxLayout()
-        row.addWidget(self.cb_tone); row.addWidget(self.sp_gamma)
-        form.addRow("Tone map", row)
-        self.sp_accum = QtWidgets.QDoubleSpinBox()
-        self.sp_accum.setRange(1e-5, 2.0); self.sp_accum.setDecimals(5)
-        self.sp_accum.setValue(0.02); self.sp_accum.setSingleStep(0.005)
-        self.sp_accum.setSuffix(" s")
-        self.sp_accum.setToolTip("Accumulation window (exposure) for this clip/cell only.")
-        self.sp_accum.valueChanged.connect(self._apply_settings)
-        form.addRow("Accum", self.sp_accum)
+        # how the clip/cell is drawn: the event frame or a Studio look, label, time stamp
+        self.style_ed = CellStyleEditor(scope="clip/cell")
+        self.style_ed.changed.connect(self._apply_settings)
+        # the classic widgets keep their names (scripts and tests address them)
+        self.cb_mode, self.cb_cmap = self.style_ed.cb_mode, self.style_ed.cb_cmap
+        self.cb_tone, self.sp_gamma = self.style_ed.cb_tone, self.style_ed.sp_gamma
+        self.sp_accum, self.cb_look = self.style_ed.sp_accum, self.style_ed.cb_look
+        form.addRow(self.style_ed)
         self.sp_scale = QtWidgets.QDoubleSpinBox()
         self.sp_scale.setRange(0.0001, 1000.0); self.sp_scale.setDecimals(4)
         self.sp_scale.setValue(1.0); self.sp_scale.setSingleStep(0.1)
@@ -896,10 +878,16 @@ class TimelineEditor(QtWidgets.QWidget):
         self.out_edit.setPlaceholderText("output .raw path")
         browse = QtWidgets.QPushButton("Browse…"); browse.clicked.connect(self._browse)
         vid_btn = QtWidgets.QPushButton("Export video…"); vid_btn.setIcon(icons.icon("film"))
+        vid_btn.setObjectName("primary")
         vid_btn.setToolTip("Render the WHOLE program — every segment, the overlay lane and "
-                           "the titles — frame by frame to an MP4, through the same render "
-                           "path the preview uses.")
+                           "the titles — frame by frame through the same render path the "
+                           "preview uses, in the format, frame rate, size and quality set "
+                           "above.")
         vid_btn.clicked.connect(self._export_video)
+        self.video_opts = videoexport.VideoOptions("timeline")
+        self.video_opts.changed.connect(self._update_export_info)
+        self.export_info = QtWidgets.QLabel("")
+        self.export_info.setObjectName("muted"); self.export_info.setWordWrap(True)
         raw_btn = QtWidgets.QPushButton("Export .raw…"); raw_btn.setIcon(icons.icon("export"))
         raw_btn.setToolTip(
             "Write the sequential lane as EVENTS in one valid EVT2.1 .raw: plain clips "
@@ -909,6 +897,8 @@ class TimelineEditor(QtWidgets.QWidget):
             "and are noted, not written.")
         raw_btn.clicked.connect(self._export_raw)
         ov = QtWidgets.QVBoxLayout()
+        ov.addWidget(self.video_opts)
+        ov.addWidget(self.export_info)
         row = QtWidgets.QHBoxLayout()
         row.addWidget(self.out_edit, 1); row.addWidget(browse)
         ov.addLayout(row)
@@ -1348,11 +1338,7 @@ class TimelineEditor(QtWidgets.QWidget):
                     sp.setValue(int(val))
                 self.sp_offset.setValue(cell.t_offset_s if cell else 0.0)
             if cell is not None:
-                self.cb_mode.setCurrentText(cell.mode)
-                self.cb_cmap.setCurrentText(cell.colormap)
-                self.cb_tone.setCurrentText(cell.tonemap)
-                self.sp_gamma.setValue(cell.gamma)
-                self.sp_accum.setValue(cell.accumulation_s)
+                self.style_ed.load(cell)
                 self.sp_scale.setValue(cell.time_scale)
                 self.chk_loop.setChecked(cell.loop)
         finally:
@@ -1365,11 +1351,7 @@ class TimelineEditor(QtWidgets.QWidget):
         cell, in_block = self._settings_cell()
         if cell is None:
             return
-        cell.mode = self.cb_mode.currentText()
-        cell.colormap = self.cb_cmap.currentText()
-        cell.tonemap = self.cb_tone.currentText()
-        cell.gamma = float(self.sp_gamma.value())
-        cell.accumulation_s = float(self.sp_accum.value())
+        self.style_ed.store(cell)
         cell.time_scale = float(self.sp_scale.value())
         cell.loop = self.chk_loop.isChecked()
         if in_block:
@@ -1503,12 +1485,24 @@ class TimelineEditor(QtWidgets.QWidget):
         finally:
             self._rendering = False
 
+    def _update_export_info(self, *_):
+        """Say what 'Export video…' will write with the current options."""
+        if not hasattr(self, "export_info"):
+            return
+        prog = self.program()
+        if not prog.segments:
+            self.export_info.setText("Add a clip to export.")
+            return
+        self.export_info.setText(self.video_opts.describe((prog.width, prog.height),
+                                                          prog.duration_s))
+
     def _refresh(self):
         """Recompile, re-range the clock, repaint the lanes and the viewport, restate."""
         self._invalidate()
         self.thumbs.purge(self.clips)
         prog = self.program()
         self.clock.set_range(0.0, max(prog.duration_s, 1e-3))
+        self._update_export_info()
         self._paint_lanes()
         if self.stage.currentWidget() is self.arrange:
             self._render_arrange()
@@ -1685,9 +1679,9 @@ class TimelineEditor(QtWidgets.QWidget):
             self.status.setText("Add at least one clip.")
             return
         self.clock.pause()
+        opts = self.video_opts.options((prog.width, prog.height))
         base = os.path.splitext(self.out_edit.text().strip())[0] or "timeline"
-        out, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Export timeline video", base + ".mp4", "MP4 video (*.mp4)")
+        out, fmt = videoexport.ask_path(self, "Export timeline video", base, opts["fmt"])
         if not out:
             return
         from gottlux.io.paths import open_in_file_browser
@@ -1695,30 +1689,41 @@ class TimelineEditor(QtWidgets.QWidget):
         folder = prov.export_folder(out)
         target = prov.artifact_path(folder, out)
         try:
-            res = with_progress(self, "Exporting timeline video",
-                                lambda cb: engine.export_program_video(prog, target,
-                                                                       fps=30.0,
-                                                                       progress=cb),
-                                label="Rendering frames…")
+            # the compiled program is the job's own copy: edits during the export stay out
+            res, cancelled = videoexport.run_job(
+                self, "Exporting timeline video", "Rendering frames…",
+                lambda progress, cancel: engine.export_program_video(
+                    prog, target, fps=opts["fps"], fmt=fmt, quality=opts["quality"],
+                    size=opts["size"], progress=progress, cancel=cancel))
         except Exception as e:
             prov.discard_folder(folder)
-            QtWidgets.QMessageBox.critical(self, "Export video", str(e))
+            QtWidgets.QMessageBox.critical(self, "Export video", f"The export failed:\n{e}")
             return
-        if not res:
+        if cancelled or not res:
             prov.discard_folder(folder)
-            QtWidgets.QMessageBox.warning(
-                self, "Export video",
-                "Encoding unavailable — install imageio-ffmpeg for MP4 export.")
+            if cancelled:
+                self.status.setText("Video export cancelled — nothing was written.")
+            else:
+                QtWidgets.QMessageBox.warning(
+                    self, "Export video",
+                    "Encoding unavailable — install imageio-ffmpeg for video export.")
             return
         spec = self._write_spec(folder, out, render=True)
+        kind = {"mp4": "MP4", "webm": "WebM", "gif": "GIF"}.get(res["format"],
+                                                               res["format"].upper())
         self._write_provenance(
-            folder, "Timeline video (MP4)",
-            prov.artifact_facts(res["path"], frames=res["frames"], fps=res["fps"],
+            folder, f"Timeline video ({kind})",
+            prov.artifact_facts(res["path"], frames=res["frames"], fps=res["fps_effective"],
                                 duration_s=res["duration_s"], width=res["width"],
                                 height=res["height"], canvas=res["canvas"],
                                 codec=res["codec"]),
-            self._export_settings(**{"Frame rate": f"{res['fps']:g} fps",
-                                     "Codec": res["codec"]}),
+            self._export_settings(**{"Frame rate": f"{res['fps']:g} fps"
+                                     + ("" if res["fps_effective"] == res["fps"] else
+                                        f" (plays at {res['fps_effective']:.4g} fps)"),
+                                     "Codec": res["codec"],
+                                     "Quality": None if res["format"] == "gif"
+                                     else f"{opts['quality']} of 10",
+                                     "Encoded size": f"{res['width']} × {res['height']} px"}),
             spec=spec,
             steps=[f"Open the Canvas composer, load `{spec}`, and use 'Export video…' — "
                    "the spec carries every cell, its clock and its look.",

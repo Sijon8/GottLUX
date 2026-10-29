@@ -152,9 +152,17 @@ class ShotRenderer:
 
     # ------------------------------------------------------------------ one frame
     def frame(self, i: int) -> np.ndarray:
-        from PIL import Image, ImageFilter
         k = self.source_index(int(i) % max(len(self), 1))
-        tau = float(self.times[k])
+        return self.frame_at(float(self.times[k]), k)
+
+    def frame_at(self, tau: float, k: int | None = None) -> np.ndarray:
+        """The frame the look draws at recording time *tau* (frame index *k*, which only
+        the orbit and the stroboscope read; default: the frame nearest *tau*). What a
+        canvas cell renders through (:mod:`gottlux.studio.cell`)."""
+        from PIL import Image, ImageFilter
+        tau = float(tau)
+        if k is None:
+            k = int(np.clip(np.searchsorted(self.times, tau - 1e-12), 0, self.n_frames - 1))
         w, h = self.draw_size
         layers = self.look.render(self.ev, k, tau, self.P, self.st, self.colors, (w, h))
         img = composite(layers, self.colors["bg"], (h, w))

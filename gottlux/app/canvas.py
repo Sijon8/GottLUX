@@ -4,10 +4,15 @@ canvas.py — the Canvas composer: place several recordings on one canvas and pl
 A self-contained :class:`QMainWindow` over the engine in :mod:`gottlux.core.canvas`. Each
 loaded clip becomes a draggable, resizable cell on a fixed-size canvas; a settings deck
 edits the *selected* cell's placement, source ROI, clock mapping (offset / time scale /
-loop), and look (accumulation mode + window, tone-map, colormap) — applied live. A shared
+loop), and **visualization** — the classic event frame (accumulation mode + window,
+tone-map, colormap) or any Studio look (trails, time surface, space-time cloud,
+stroboscope, …), plus an optional label and time stamp (:mod:`gottlux.app.cellstyle`) —
+applied live, so one canvas can show several visualizations side by side. A shared
 transport plays and scrubs the canvas timeline (the longest clip extent). Compositions
-save/load as ``.gottlux-canvas.json`` and export as an MP4 (rendered frames) or as a
-single composited EVT2.1 ``.raw`` (re-encoded events; the spec rides along as a sidecar).
+save/load as ``.gottlux-canvas.json`` and export as a video — MP4, WebM or GIF at a
+chosen frame rate, size and quality, rendered off the GUI thread with a Cancel button
+(:mod:`gottlux.app.videoexport`) — or as a single composited EVT2.1 ``.raw`` (re-encoded
+events; the spec rides along as a sidecar).
 Both exports land in a **provenance folder** (:mod:`gottlux.run.export_provenance`) — the
 artifact, the spec, a README listing every cell's source recording with its directory and
 SHA-256 and how that cell was placed, and the machine-readable ``provenance.json``.
@@ -37,14 +42,12 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from gottlux.app import icons
 from gottlux.app import style
+from gottlux.app import videoexport
+from gottlux.app.cellstyle import CellStyleEditor
 from gottlux.app.transport import TimeController, TransportBar
 from gottlux.app.uikit import plot_with_deck, with_progress
 from gottlux.core import canvas as engine
-from gottlux.core import tonemap
 
-_MODES = ["count", "time_surface", "polarity", "polarity_ratio", "on", "off", "binary"]
-_CMAPS = ["inferno", "viridis", "magma", "plasma", "cividis", "gray", "turbo",
-          "coolwarm", "RdBu", "bwr", "seismic", "PiYG", "Spectral"]
 _GRIP = 12          # resize-grip square, in canvas pixels
 
 
@@ -644,38 +647,6 @@ class CanvasComposerWindow(QtWidgets.QMainWindow):
         self.sp_scale.valueChanged.connect(self._apply_panel)
         form.addRow("Time scale", self.sp_scale)
 
-        self.sp_accum = QtWidgets.QDoubleSpinBox()
-        self.sp_accum.setRange(1e-5, 2.0); self.sp_accum.setDecimals(5)
-        self.sp_accum.setValue(0.02); self.sp_accum.setSingleStep(0.005)
-        self.sp_accum.setSuffix(" s")
-        self.sp_accum.setToolTip("Accumulation window (exposure) for this cell only.")
-        self.sp_accum.valueChanged.connect(self._apply_panel)
-        form.addRow("Accum", self.sp_accum)
-
-        self.cb_mode = QtWidgets.QComboBox(); self.cb_mode.addItems(_MODES)
-        self.cb_mode.setToolTip("Accumulation mode for this cell (count, polarity, …).")
-        self.cb_mode.currentIndexChanged.connect(self._apply_panel)
-        form.addRow("Mode", self.cb_mode)
-
-        self.cb_cmap = QtWidgets.QComboBox(); self.cb_cmap.addItems(_CMAPS)
-        self.cb_cmap.setToolTip("Colormap for this cell.")
-        self.cb_cmap.currentIndexChanged.connect(self._apply_panel)
-        form.addRow("Color", self.cb_cmap)
-
-        self.cb_tone = QtWidgets.QComboBox(); self.cb_tone.addItems(tonemap.EXPRESSIONS)
-        self.cb_tone.setCurrentText("sqrt")
-        self.cb_tone.setToolTip("Tone-map expression for this cell (dynamic-range "
-                                "compression before the colormap).")
-        self.cb_tone.currentIndexChanged.connect(self._apply_panel)
-        self.sp_gamma = QtWidgets.QDoubleSpinBox()
-        self.sp_gamma.setRange(0.1, 3.0); self.sp_gamma.setSingleStep(0.05)
-        self.sp_gamma.setValue(0.5); self.sp_gamma.setPrefix("γ ")
-        self.sp_gamma.setToolTip("Exponent for the 'gamma' expression.")
-        self.sp_gamma.valueChanged.connect(self._apply_panel)
-        rr = QtWidgets.QHBoxLayout()
-        rr.addWidget(self.cb_tone); rr.addWidget(self.sp_gamma)
-        form.addRow("Tone map", rr)
-
         self.chk_loop = QtWidgets.QCheckBox("Loop")
         self.chk_loop.setChecked(True)
         self.chk_loop.setToolTip("Repeat the clip from its start when its extent ends; "
@@ -683,7 +654,17 @@ class CanvasComposerWindow(QtWidgets.QMainWindow):
         self.chk_loop.toggled.connect(self._apply_panel)
         form.addRow("", self.chk_loop)
 
-        g_sel.setLayout(form)
+        # how the cell is drawn: the event frame or a Studio look, label, time stamp
+        self.style_ed = CellStyleEditor(scope="cell")
+        self.style_ed.changed.connect(self._apply_panel)
+        # the classic widgets keep their names (scripts and tests address them)
+        self.cb_mode, self.cb_cmap = self.style_ed.cb_mode, self.style_ed.cb_cmap
+        self.cb_tone, self.sp_gamma = self.style_ed.cb_tone, self.style_ed.sp_gamma
+        self.sp_accum, self.cb_look = self.style_ed.sp_accum, self.style_ed.cb_look
+        vbox = QtWidgets.QVBoxLayout()
+        vbox.addLayout(form)
+        vbox.addWidget(self.style_ed)
+        g_sel.setLayout(vbox)
         v.addWidget(g_sel)
         self._sel_group = g_sel
         g_sel.setEnabled(False)
@@ -697,8 +678,15 @@ class CanvasComposerWindow(QtWidgets.QMainWindow):
         load_btn.setToolTip("Load a saved composition and its source recordings.")
         load_btn.clicked.connect(self._load_composition)
         vid_btn = QtWidgets.QPushButton("Export video…"); vid_btn.setIcon(icons.icon("film"))
-        vid_btn.setToolTip("Render the composition to an MP4 over the canvas timeline.")
+        vid_btn.setObjectName("primary")
+        vid_btn.setToolTip("Render the composition — every cell as previewed, with its "
+                           "look, label and time stamp, plus the titles — to a video in "
+                           "the format, frame rate, size and quality set above.")
         vid_btn.clicked.connect(self._export_video)
+        self.video_opts = videoexport.VideoOptions("canvas")
+        self.video_opts.changed.connect(self._update_export_info)
+        self.export_info = QtWidgets.QLabel("")
+        self.export_info.setObjectName("muted"); self.export_info.setWordWrap(True)
         raw_btn = QtWidgets.QPushButton("Export .raw…"); raw_btn.setIcon(icons.icon("export"))
         raw_btn.setToolTip("Re-encode the composited EVENTS as one EVT2.1 .raw whose "
                            "geometry is the canvas size. Per-clip colors/tone-maps do not "
@@ -707,7 +695,9 @@ class CanvasComposerWindow(QtWidgets.QMainWindow):
         raw_btn.clicked.connect(self._export_raw)
         gl = QtWidgets.QGridLayout()
         gl.addWidget(save_btn, 0, 0); gl.addWidget(load_btn, 0, 1)
-        gl.addWidget(vid_btn, 1, 0); gl.addWidget(raw_btn, 1, 1)
+        gl.addWidget(self.video_opts, 1, 0, 1, 2)
+        gl.addWidget(self.export_info, 2, 0, 1, 2)
+        gl.addWidget(vid_btn, 3, 0); gl.addWidget(raw_btn, 3, 1)
         g_out.setLayout(gl)
         v.addWidget(g_out)
         v.addStretch(1)
@@ -857,11 +847,24 @@ class CanvasComposerWindow(QtWidgets.QMainWindow):
             dur = max(engine.canvas_duration(self.spec, self.recs),
                       engine.texts_extent_s(self.spec))
         self.clock.set_range(0.0, max(dur, 1e-3))
+        self._update_export_info()
+
+    def _update_export_info(self, *_):
+        if not hasattr(self, "export_info"):
+            return
+        if not (self.spec.clips or self.spec.texts):
+            self.export_info.setText("Add clips to export.")
+            return
+        dur = max(engine.canvas_duration(self.spec, self.recs),
+                  engine.texts_extent_s(self.spec))
+        self.export_info.setText(self.video_opts.describe(
+            (self.spec.width, self.spec.height), dur))
 
     def _on_canvas_size(self, *_):
         self.spec.width = int(self.canvas_w.value())
         self.spec.height = int(self.canvas_h.value())
         self.view.sync_canvas()
+        self._update_export_info()
 
     def showEvent(self, ev):
         super().showEvent(ev)
@@ -899,12 +902,8 @@ class CanvasComposerWindow(QtWidgets.QMainWindow):
                 sp.setValue(int(val))
             self.sp_offset.setValue(clip.t_offset_s)
             self.sp_scale.setValue(clip.time_scale)
-            self.sp_accum.setValue(clip.accumulation_s)
-            self.cb_mode.setCurrentText(clip.mode)
-            self.cb_cmap.setCurrentText(clip.colormap)
-            self.cb_tone.setCurrentText(clip.tonemap)
-            self.sp_gamma.setValue(clip.gamma)
             self.chk_loop.setChecked(clip.loop)
+            self.style_ed.load(clip)
         finally:
             self._loading = False
 
@@ -923,12 +922,8 @@ class CanvasComposerWindow(QtWidgets.QMainWindow):
         clip.roi = None if (full or x1 <= x0 or y1 <= y0) else (x0, y0, x1, y1)
         clip.t_offset_s = float(self.sp_offset.value())
         clip.time_scale = float(self.sp_scale.value())
-        clip.accumulation_s = float(self.sp_accum.value())
-        clip.mode = self.cb_mode.currentText()
-        clip.colormap = self.cb_cmap.currentText()
-        clip.tonemap = self.cb_tone.currentText()
-        clip.gamma = float(self.sp_gamma.value())
         clip.loop = self.chk_loop.isChecked()
+        self.style_ed.store(clip)
         self.view.sync_cell(i)
         self._update_range()
         self._render_one(i)
@@ -1067,33 +1062,54 @@ class CanvasComposerWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.information(self, "Export video", "Add clips first.")
             return
         self.clock.pause()
-        out, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Export composition video", "canvas.mp4", "MP4 video (*.mp4)")
+        opts = self.video_opts.options((self.spec.width, self.spec.height))
+        out, fmt = videoexport.ask_path(self, "Export composition video", "canvas",
+                                        opts["fmt"])
         if not out:
             return
         from gottlux.run import export_provenance as prov
         folder = prov.export_folder(out)
         target = prov.artifact_path(folder, out)
-        res = with_progress(self, "Exporting canvas video",
-                            lambda cb: engine.export_video(self.spec, self.recs, target,
-                                                           fps=30.0, progress=cb),
-                            label="Rendering frames…")
-        if not res:
+        # the job renders a snapshot: edits made while it runs do not leak into the file
+        spec_now = engine.CanvasSpec.from_dict(self.spec.to_dict())
+        recs_now = dict(self.recs)
+        try:
+            res, cancelled = videoexport.run_job(
+                self, "Exporting canvas video", "Rendering frames…",
+                lambda progress, cancel: engine.export_video(
+                    spec_now, recs_now, target, fps=opts["fps"], fmt=fmt,
+                    quality=opts["quality"], size=opts["size"], progress=progress,
+                    cancel=cancel))
+        except Exception as e:
             prov.discard_folder(folder)
-            QtWidgets.QMessageBox.warning(
-                self, "Export video",
-                "Encoding unavailable — install imageio-ffmpeg for MP4 export.")
+            QtWidgets.QMessageBox.critical(self, "Export video", f"The export failed:\n{e}")
+            return
+        if cancelled or not res:
+            prov.discard_folder(folder)
+            if cancelled:
+                self.statusBar().showMessage("Video export cancelled — nothing was written.")
+            else:
+                QtWidgets.QMessageBox.warning(
+                    self, "Export video",
+                    "Encoding unavailable — install imageio-ffmpeg for video export.")
             return
         spec = os.path.splitext(os.path.basename(target))[0] + engine.SPEC_SUFFIX
-        engine.save_spec(self.spec, os.path.join(folder, spec))
+        engine.save_spec(spec_now, os.path.join(folder, spec))
+        kind = {"mp4": "MP4", "webm": "WebM", "gif": "GIF"}.get(res["format"],
+                                                               res["format"].upper())
         self._write_provenance(
-            folder, "Canvas video (MP4)",
-            prov.artifact_facts(res["path"], frames=res["frames"], fps=res["fps"],
+            folder, f"Canvas video ({kind})",
+            prov.artifact_facts(res["path"], frames=res["frames"], fps=res["fps_effective"],
                                 duration_s=res["duration_s"], width=res["width"],
                                 height=res["height"], canvas=res["canvas"],
                                 codec=res["codec"]),
-            self._export_settings(**{"Frame rate": f"{res['fps']:g} fps",
-                                     "Codec": res["codec"]}),
+            self._export_settings(**{"Frame rate": f"{res['fps']:g} fps"
+                                     + ("" if res["fps_effective"] == res["fps"] else
+                                        f" (plays at {res['fps_effective']:.4g} fps)"),
+                                     "Codec": res["codec"],
+                                     "Quality": None if res["format"] == "gif"
+                                     else f"{opts['quality']} of 10",
+                                     "Encoded size": f"{res['width']} × {res['height']} px"}),
             spec=spec,
             steps=[f"Load `{spec}` with 'Load composition…' in the Canvas composer and "
                    "use 'Export video…' — the spec carries every cell, clock and look.",

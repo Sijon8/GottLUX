@@ -275,11 +275,32 @@ def cell_usage(clip, source, **fields) -> dict:
     row = {"source": int(source), "dest_rect": [int(v) for v in clip.rect],
            "roi": None if clip.roi is None else [int(v) for v in clip.roi],
            "t_offset_s": round(float(clip.t_offset_s), 6),
-           "time_scale": float(clip.time_scale),
-           "accumulation_s": float(clip.accumulation_s),
-           "mode": str(clip.mode), "colormap": str(clip.colormap),
-           "tonemap": str(clip.tonemap), "gamma": float(clip.gamma),
-           "loop": bool(clip.loop)}
+           "time_scale": float(clip.time_scale)}
+    look = str(getattr(clip, "look", "") or "")
+    if look:
+        # a Studio look draws the cell: its settings, not the classic frame's, decide
+        # what the cell looked like
+        from gottlux.studio.looks import get_look
+        try:
+            lk = get_look(look)
+            title, params = lk.title, lk.resolve(getattr(clip, "look_params", {}) or {})
+        except KeyError:
+            title, params = look, dict(getattr(clip, "look_params", {}) or {})
+        row.update({"visualization": f"{title} (Studio look '{look}')",
+                    "look": look, "look_params": params,
+                    "palette": str(getattr(clip, "palette", "fire-ice")),
+                    "denoise": bool(getattr(clip, "denoise", False)),
+                    "bloom": float(getattr(clip, "bloom", 0.0))})
+    else:
+        row.update({"visualization": "Event frame",
+                    "accumulation_s": float(clip.accumulation_s),
+                    "mode": str(clip.mode), "colormap": str(clip.colormap),
+                    "tonemap": str(clip.tonemap), "gamma": float(clip.gamma)})
+    row["loop"] = bool(clip.loop)
+    if getattr(clip, "label", ""):
+        row["label"] = str(clip.label)
+    if getattr(clip, "stamp", False):
+        row["stamp"] = True
     row.update({k: v for k, v in fields.items() if v is not None})
     return row
 
@@ -333,6 +354,11 @@ def _plain(v) -> str:
     return str(v)
 
 
+def _params(v) -> str:
+    return ", ".join(f"{k} = {val:g}" if isinstance(val, float) else f"{k} = {val}"
+                     for k, val in dict(v).items()) or "defaults"
+
+
 #: The usage rows, in README order, as ``(key, label, formatter)``. A row whose key the
 #: caller did not supply is left out, so each export path prints exactly what applies to it.
 _USAGE_ROWS = (
@@ -345,12 +371,19 @@ _USAGE_ROWS = (
     ("dest_rect", "Destination rect on the canvas", _rect),
     ("t_offset_s", "Time offset", _seconds),
     ("time_scale", "Time scale", _scale),
+    ("visualization", "Visualization", _plain),
+    ("look_params", "Look parameters", _params),
+    ("palette", "Palette (ON / OFF / background)", _plain),
+    ("denoise", "Denoise", _yes_no),
+    ("bloom", "Bloom", _plain),
     ("accumulation_s", "Accumulation (exposure)", _millis),
     ("mode", "Accumulation mode", _plain),
     ("colormap", "Colormap", _plain),
     ("tonemap", "Tone map", _plain),
     ("gamma", "Gamma", _plain),
     ("loop", "Loop", _yes_no),
+    ("label", "Cell label", _plain),
+    ("stamp", "Time stamp", _yes_no),
     ("gap_after_s", "Gap after this item", _seconds),
     ("note", "Note", _plain),
 )

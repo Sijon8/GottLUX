@@ -46,6 +46,17 @@ so a cell on the canvas looks exactly like the same settings in the Live viewer;
 additions here are the clock mapping, the ROI crop, and the nearest-neighbour placement
 into the destination rect.
 
+Visualizations per cell
+-----------------------
+A cell can instead be drawn by any **Studio look** (``CanvasClip.look``: trails, heat,
+time surface, light painting, space-time cloud, stroboscope, waterfall, flicker hue,
+radar — :mod:`gottlux.studio.looks`) with its own parameters and ON/OFF palette, through
+:mod:`gottlux.studio.cell`. So one canvas can show the same moment as an event frame, a
+trail, a time surface and a space-time cloud side by side, and export them as one video.
+Every cell may also carry a **label** (its title, drawn in its top-left corner) and a
+**time stamp** (the recording time it shows, or the look's own readout) — burned into the
+preview and the video alike.
+
 What the ``.raw`` export does — and honestly does not — carry
 -------------------------------------------------------------
 An event file carries **events**, not rendering. The exported ``.raw`` preserves each
@@ -87,7 +98,9 @@ SPEC_SUFFIX = ".gottlux-canvas.json"
 #: canvas dimension (coordinates must stay below 2048). Rendering has no such limit.
 MAX_RAW_DIM = 2048
 
-_SPEC_VERSION = 1
+#: 2 added per-cell looks, palettes, labels and time stamps; version-1 specs load as
+#: classic event-frame cells.
+_SPEC_VERSION = 2
 
 
 # ====================================================================================
@@ -126,6 +139,23 @@ class CanvasClip:
     loop : bool
         When True the clip repeats from its start after its extent ends; when False the
         cell goes dark outside its extent.
+    look : str
+        ``""`` draws the classic event frame (mode / accumulation / tone-map / colormap
+        above). A Studio look name (``trails``, ``heat``, ``surface``, ``paint``,
+        ``spacetime``, ``strobe``, ``waterfall``, ``flicker``, ``radar``) draws the cell
+        with that look instead; the classic settings are then unused.
+    look_params : dict
+        The look's parameters (missing keys take the look's defaults).
+    palette : str
+        ON/OFF/background palette for a look (:mod:`gottlux.core.colors`).
+    denoise : bool
+        Hot-pixel cut + background-activity filter before a look draws (as the Studio does).
+    bloom : float
+        Glow for a look (0 = off; about 0.5–1.5 = glow).
+    label : str
+        Optional title drawn in the cell's top-left corner.
+    stamp : bool
+        Draw the recording time the cell shows (a look draws its own readout).
     """
     source: str
     rect: tuple = (0, 0, 320, 320)
@@ -138,6 +168,13 @@ class CanvasClip:
     tonemap: str = "sqrt"
     gamma: float = 0.5
     loop: bool = True
+    look: str = ""
+    look_params: dict = field(default_factory=dict)
+    palette: str = "fire-ice"
+    denoise: bool = False
+    bloom: float = 0.0
+    label: str = ""
+    stamp: bool = False
 
     def to_dict(self) -> dict:
         return {"source": self.source, "rect": [int(v) for v in self.rect],
@@ -146,7 +183,16 @@ class CanvasClip:
                 "time_scale": float(self.time_scale),
                 "accumulation_s": float(self.accumulation_s),
                 "mode": self.mode, "colormap": self.colormap, "tonemap": self.tonemap,
-                "gamma": float(self.gamma), "loop": bool(self.loop)}
+                "gamma": float(self.gamma), "loop": bool(self.loop),
+                "look": str(self.look), "look_params": dict(self.look_params or {}),
+                "palette": str(self.palette), "denoise": bool(self.denoise),
+                "bloom": float(self.bloom), "label": str(self.label),
+                "stamp": bool(self.stamp)}
+
+    @property
+    def visualization(self) -> str:
+        """``"frame"`` for the classic event frame, else the Studio look's name."""
+        return self.look or "frame"
 
     @classmethod
     def from_dict(cls, d: dict) -> CanvasClip:
@@ -161,7 +207,14 @@ class CanvasClip:
                    colormap=str(d.get("colormap", "inferno")),
                    tonemap=str(d.get("tonemap", "sqrt")),
                    gamma=float(d.get("gamma", 0.5)),
-                   loop=bool(d.get("loop", True)))
+                   loop=bool(d.get("loop", True)),
+                   look=str(d.get("look", "") or ""),
+                   look_params=dict(d.get("look_params") or {}),
+                   palette=str(d.get("palette", "fire-ice")),
+                   denoise=bool(d.get("denoise", False)),
+                   bloom=float(d.get("bloom", 0.0)),
+                   label=str(d.get("label", "") or ""),
+                   stamp=bool(d.get("stamp", False)))
 
 
 @dataclass
@@ -493,10 +546,21 @@ def text_omission_note(n: int) -> str:
     return f"{int(n)} text item(s) omitted — text renders in video export only"
 
 
+_fonts: dict = {}
+
+
 def _load_font(size_px: int):
     """A DejaVuSans TrueType face at *size_px*, resolved through matplotlib's bundled
     fonts (matplotlib is a core dependency, so the face exists wherever gottlux runs);
-    PIL's fixed-size bitmap font — with a one-time size warning — only if that fails."""
+    PIL's fixed-size bitmap font — with a one-time size warning — only if that fails.
+    Faces are cached per size: a title drawn on every frame opens the font once."""
+    font = _fonts.get(int(size_px))
+    if font is None:
+        font = _fonts[int(size_px)] = _open_font(int(size_px))
+    return font
+
+
+def _open_font(size_px: int):
     from PIL import ImageFont
     try:
         from matplotlib import font_manager
@@ -586,25 +650,69 @@ def _norm_roi(clip: CanvasClip, rec):
 def render_cell(clip: CanvasClip, rec, t_canvas: float):
     """Render one clip's cell at a canvas time → ``(h, w, 3)`` uint8, or ``None`` (dark).
 
-    Runs the canonical pipeline (:func:`gottlux.core.render.render_frame`) at the mapped
-    clip time with the clip's own accumulation/tone-map settings, colourizes with the
-    clip's colormap, crops to the source ROI, and nearest-resizes into the destination
-    rect — so events stay crisp blocks rather than smearing.
+    Classic cells run the canonical pipeline (:func:`gottlux.core.render.render_frame`)
+    at the mapped clip time with the clip's own accumulation/tone-map settings, colourize
+    with the clip's colormap, crop to the source ROI, and nearest-resize into the
+    destination rect — so events stay crisp blocks rather than smearing. A cell with a
+    ``look`` is drawn by that Studio look (:mod:`gottlux.studio.cell`). Either way the
+    cell's label and time stamp are drawn last.
     """
-    from gottlux.viz import video as _vid
     t_rec = clip_time(clip, rec, t_canvas)
     w, h = int(clip.rect[2]), int(clip.rect[3])
     if t_rec is None or w <= 0 or h <= 0:
         return None
+    if clip.look:
+        from gottlux.studio import cell as _cell
+        lc = _cell.cell_for(rec, clip.look, clip.look_params, clip.palette, clip.roi,
+                            clip.denoise, clip.bloom, (w, h))
+        rgb = lc.frame(t_rec)
+        stamp = lc.stamp(t_rec) if clip.stamp else ""
+    else:
+        rgb = _classic_cell(clip, rec, t_rec, (w, h))
+        stamp = f"t = {t_rec:.3f} s" if clip.stamp else ""
+    if clip.label or stamp:
+        rgb = draw_cell_labels(rgb, clip.label, stamp)
+    return rgb
+
+
+def _classic_cell(clip: CanvasClip, rec, t_rec: float, size) -> np.ndarray:
+    from gottlux.viz import video as _vid
     roi = _norm_roi(clip, rec)
     filt = None if roi == (0, 0, int(rec.width), int(rec.height)) else _RoiFilter(roi)
     disp, levels, _vmax, _win = _render_cell_frame(
         rec, t_rec, float(clip.accumulation_s), mode=clip.mode, expr=clip.tonemap,
         gamma=float(clip.gamma), filters=filt)
-    rgb = _vid.disp_to_rgb(disp, levels, clip.colormap)
     x0, y0, x1, y1 = roi
-    rgb = rgb[y0:y1, x0:x1]
-    return _vid.resize_rgb(rgb, (w, h))
+    # crop before colourizing: only the ROI's pixels go through the colour table
+    rgb = _vid.disp_to_rgb(disp[y0:y1, x0:x1], levels, clip.colormap)
+    return _vid.resize_rgb(rgb, size)
+
+
+_label_fonts: dict = {}
+
+
+def draw_cell_labels(rgb: np.ndarray, label: str = "", stamp: str = "") -> np.ndarray:
+    """Burn a cell's *label* (top-left) and *stamp* (below it) into its frame, on a
+    translucent bar so either reads over any picture. Sized from the cell's height."""
+    from PIL import Image, ImageDraw
+    h, w = rgb.shape[:2]
+    size = int(np.clip(h / 18.0, 10, 28))
+    font = _label_fonts.get(size)
+    if font is None:
+        font = _label_fonts[size] = _load_font(size)
+    im = Image.fromarray(np.ascontiguousarray(rgb, np.uint8)).convert("RGBA")
+    layer = Image.new("RGBA", im.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    pad, y = max(3, size // 4), max(3, size // 4)
+    for text, ink in ((label, (240, 242, 245, 255)), (stamp, (200, 210, 220, 255))):
+        if not text:
+            continue
+        box = d.textbbox((0, 0), text, font=font)
+        tw, th = box[2] - box[0], box[3] - box[1]
+        d.rectangle((pad - 3, y - 2, pad + tw + 3, y + th + 3), fill=(10, 12, 16, 140))
+        d.text((pad - box[0], y - box[1]), text, font=font, fill=ink)
+        y += th + pad + 2
+    return np.asarray(Image.alpha_composite(im, layer).convert("RGB"), np.uint8)
 
 
 def render_frame(spec: CanvasSpec, recs, t_canvas: float) -> np.ndarray:
@@ -898,84 +1006,85 @@ def program_spec(program: Program, overlays: bool = False, texts: bool = False) 
     return spec, recs
 
 
-def _video_result(writer, fps, duration_s, canvas_wh, warnings) -> dict | None:
-    """Close *writer* and describe what it wrote — the video exports' common return shape.
+def _encode(frame_at, duration, out_path, fps, canvas_wh, fmt, quality, size, progress,
+            cancel, workers, warnings=()):
+    """Encode ``frame_at(i)`` for ``i < round(duration · fps)`` through the one encoder
+    (:func:`gottlux.viz.encode.encode_frames`) → the video exports' common facts dict.
 
-    ``None`` when nothing was written (a missing muxer, or an encode that produced no
-    frame), so ``if not result:`` still means "the export did not happen"; otherwise a
-    facts dict complete enough for :mod:`gottlux.run.export_provenance` to document the
-    file without re-opening it: ``path``, ``frames`` actually encoded, ``fps``,
-    ``duration_s``, the encoded ``width``/``height`` (even-rounded for H.264, so it can
-    differ by a pixel from the canvas), the ``canvas`` the frames were rendered at, and
+    ``None`` when the export did not happen — the muxer is missing, or *cancel* fired —
+    so ``if not result:`` keeps meaning "nothing was written"; otherwise a dict complete
+    enough for :mod:`gottlux.run.export_provenance` to document the file without
+    re-opening it: ``path``, ``format``, ``frames`` actually encoded, ``fps`` (requested)
+    and ``fps_effective`` (what plays — a GIF rounds its delay to 10 ms), ``duration_s``,
+    the encoded ``width``/``height`` (even-rounded for H.264/VP9, so it can differ by a
+    pixel from the canvas), the ``canvas`` the frames were rendered at, the ``codec`` and
     any ``warnings``.
     """
-    size = writer.size
-    path = writer.close()
-    if not path:
+    from gottlux.viz import encode as _enc
+    fps = float(fps)
+    n = max(1, int(round(float(duration) * fps)))
+    fmt = fmt or _enc.format_for(out_path)
+    try:
+        facts = _enc.encode_frames(frame_at, n, out_path, fmt=fmt, fps=fps, quality=quality,
+                                   size=size, progress=progress, cancel=cancel,
+                                   workers=workers)
+    except _enc.EncodeError as e:
+        if not _enc.ffmpeg_ok():
+            return None                                  # no muxer: fail soft, as before
+        raise RuntimeError(str(e)) from e
+    if facts is None:
         return None
     W, H = (int(v) for v in canvas_wh)
-    return {"path": path, "frames": int(writer.frames), "fps": float(fps),
-            "duration_s": float(duration_s), "width": int(size[0]) if size else W,
-            "height": int(size[1]) if size else H, "canvas": (W, H),
-            "codec": "H.264 (libx264) in MP4", "warnings": list(warnings)}
+    return {"path": facts["path"], "format": facts["format"], "frames": facts["frames"],
+            "fps": fps, "fps_effective": facts["fps_effective"],
+            "duration_s": facts["frames"] / facts["fps_effective"],
+            "width": facts["width"], "height": facts["height"], "canvas": (W, H),
+            "codec": facts["codec"], "warnings": list(warnings)}
 
 
 def export_program_video(program: Program, out_mp4: str, fps: float = 30.0,
-                         duration_s: float | None = None, progress=None) -> dict | None:
-    """Render the whole program to an MP4 at *fps* — segments, overlays, and titles.
+                         duration_s: float | None = None, progress=None, *, fmt=None,
+                         quality: float = 8, size=None, cancel=None,
+                         workers: int = 2) -> dict | None:
+    """Render the whole program to a video at *fps* — segments, overlays, and titles.
 
     Frame *i* samples program time ``i / fps`` through :func:`render_program_frame`, so
-    the file is frame-for-frame what the Timeline's preview shows. Fails soft like
-    :func:`export_video`: returns the :func:`_video_result` facts dict, or ``None`` when
-    the muxer is missing.
+    the file is frame-for-frame what the Timeline's preview shows. The format follows
+    *out_mp4*'s extension (``.mp4``, ``.webm``, ``.gif``; no extension = PNG frames) or
+    *fmt*; *size* ``(w, h)`` scales the frames; *cancel()* stops early. Fails soft like
+    :func:`export_video`: returns the facts dict (see :func:`_encode`), or ``None`` when
+    the muxer is missing or the export was cancelled.
     """
-    from gottlux.viz.video import VideoWriter
     duration = program.duration_s if duration_s is None else float(duration_s)
-    n = max(1, int(round(duration * float(fps))))
-    w = VideoWriter(out_mp4, fps=fps)
-    if not w.ok:
-        w.close()
-        return None
-    for i in range(n):
-        w.append(render_program_frame(program, i / float(fps)))
-        if progress:
-            try:
-                progress((i + 1) / n)
-            except Exception:
-                pass
-    return _video_result(w, fps, duration, (program.width, program.height), [])
+    return _encode(lambda i: render_program_frame(program, i / float(fps)), duration,
+                   out_mp4, fps, (program.width, program.height), fmt, quality, size,
+                   progress, cancel, workers)
 
 
 # ====================================================================================
 # Exports — MP4 (rendered) and .raw (re-encoded events)
 # ====================================================================================
 def export_video(spec: CanvasSpec, recs, out_mp4: str, fps: float = 30.0,
-                 duration_s: float | None = None, progress=None) -> dict | None:
-    """Render the composition to an MP4 at *fps* over ``[0, duration_s]``.
+                 duration_s: float | None = None, progress=None, *, fmt=None,
+                 quality: float = 8, size=None, cancel=None,
+                 workers: int = 2) -> dict | None:
+    """Render the composition to a video at *fps* over ``[0, duration_s]``.
 
     *duration_s* defaults to :func:`canvas_duration` extended over the text spans
     (:func:`texts_extent_s`), so a title slide past the last clip still plays. Frame *i*
-    samples canvas time ``i / fps``. Uses :class:`gottlux.viz.video.VideoWriter`
-    (imageio-ffmpeg) and fails soft: returns the :func:`_video_result` facts dict (the
-    written ``path``, the frame count, the fps, the duration, the encoded geometry), or
-    ``None`` when the muxer is unavailable.
+    samples canvas time ``i / fps``; every cell is drawn as it is previewed — the classic
+    event frame or its Studio look, with its label and time stamp. The format follows
+    *out_mp4*'s extension (``.mp4``, ``.webm``, ``.gif``; no extension = PNG frames) or
+    *fmt*, through the one encoder (:mod:`gottlux.viz.encode`); *size* ``(w, h)`` scales
+    the frames; *cancel()* stops early. Fails soft: returns the facts dict (see
+    :func:`_encode`), or ``None`` when the muxer is unavailable or the export was
+    cancelled.
     """
-    from gottlux.viz.video import VideoWriter
     duration = (max(canvas_duration(spec, recs), texts_extent_s(spec))
                 if duration_s is None else float(duration_s))
-    n = max(1, int(round(duration * float(fps))))
-    w = VideoWriter(out_mp4, fps=fps)
-    if not w.ok:
-        w.close()
-        return None
-    for i in range(n):
-        w.append(render_frame(spec, recs, i / float(fps)))
-        if progress:
-            try:
-                progress((i + 1) / n)
-            except Exception:
-                pass
-    return _video_result(w, fps, duration, (spec.width, spec.height), [])
+    return _encode(lambda i: render_frame(spec, recs, i / float(fps)), duration, out_mp4,
+                   fps, (spec.width, spec.height), fmt, quality, size, progress, cancel,
+                   workers)
 
 
 def export_raw(spec: CanvasSpec, recs, out_raw: str, duration_s: float | None = None,
@@ -1075,6 +1184,10 @@ def export_raw(spec: CanvasSpec, recs, out_raw: str, duration_s: float | None = 
 
     sidecar = os.path.splitext(out_raw)[0] + SPEC_SUFFIX
     save_spec(spec, sidecar)
+    warns = [text_omission_note(len(spec.texts))] if spec.texts else []
+    n_looks = sum(1 for c in spec.clips if c.look)
+    if n_looks:
+        warns.append(f"{n_looks} cell(s) drawn with a Studio look — a look is render-only, "
+                     "so the .raw carries their events and the spec keeps the look")
     return {"path": out_raw, "sidecar": sidecar, "n_events": int(n),
-            "duration_s": duration, "width": W, "height": H,
-            "warnings": [text_omission_note(len(spec.texts))] if spec.texts else []}
+            "duration_s": duration, "width": W, "height": H, "warnings": warns}
