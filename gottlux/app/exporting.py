@@ -96,11 +96,12 @@ def save_gl_snapshot(gl_view, path):
     """Grab the OpenGL 3-D view's framebuffer to a PNG. Returns ``[path]`` or ``[]``."""
     try:
         img = gl_view.grabFramebuffer()
+        if img is None or img.isNull():          # no OpenGL framebuffer to grab
+            return []
         if not path.lower().endswith(".png"):
             path += ".png"
         os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-        img.save(path)
-        return [path]
+        return [path] if img.save(path) else []
     except Exception:
         return []
 

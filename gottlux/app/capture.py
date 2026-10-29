@@ -35,11 +35,26 @@ _MAX_FRAMES = 18000
 
 # --------------------------------------------------------------------- pixel grab
 def qimage_to_rgb(qimg) -> np.ndarray:
-    """Convert a QImage to a contiguous ``(H, W, 3)`` uint8 RGB array."""
+    """Convert a QImage to a contiguous ``(H, W, 3)`` uint8 RGB array that owns its pixels.
+
+    The converted image is a temporary freed on return. When a row needs no padding
+    (``bytesPerLine == 3·w``, i.e. a width divisible by 4 — every common screen width) a
+    reshape is only a *view* of its buffer, so the result is always copied: a view would
+    point at freed memory (garbage frames, then an access violation in the encoder)."""
     qimg = qimg.convertToFormat(QtGui.QImage.Format.Format_RGB888)
     w, h, bpl = qimg.width(), qimg.height(), qimg.bytesPerLine()
     buf = np.frombuffer(memoryview(qimg.constBits()), np.uint8)
-    return np.ascontiguousarray(buf[:bpl * h].reshape(h, bpl)[:, :w * 3].reshape(h, w, 3))
+    return np.array(buf[:bpl * h].reshape(h, bpl)[:, :w * 3].reshape(h, w, 3), copy=True)
+
+
+def gl_ready(view) -> bool:
+    """True when an OpenGL view can render offscreen (``renderToArray``): its context
+    exists. Without one (a remote desktop, a VM, offscreen Qt) the call crashes the
+    process instead of raising, so callers check first."""
+    try:
+        return bool(view.isValid()) and view.context() is not None
+    except Exception:
+        return False
 
 
 def gl_to_rgb(arr) -> np.ndarray:
@@ -305,6 +320,7 @@ class ScreenCaptureDialog(QtWidgets.QDialog):
         if self.region and not use_render:               # region crop applies to the on-screen grab
             x, y, w, h = self.region
         mid_frame = [None]
+        written_n = [0]
 
         def frames():
             for i, t in enumerate(times):
@@ -327,13 +343,27 @@ class ScreenCaptureDialog(QtWidgets.QDialog):
                 if i == n // 2:
                     mid_frame[0] = rgb
                 prog.setValue(i + 1)
+                written_n[0] += 1
                 yield rgb
 
         from gottlux.run import export_provenance as eprov
         folder = eprov.export_folder(out)
         target = eprov.artifact_path(folder, out)
         path = _video.write_video(target, frames(), fps=out_fps)
+        aborted = prog.wasCanceled()
         prog.close()
+        if aborted:                                  # nothing half-made is left behind
+            try:
+                if path and os.path.isfile(path):
+                    os.remove(path)
+            except OSError:
+                pass
+            eprov.discard_folder(folder)
+            QtWidgets.QMessageBox.information(
+                self, "Capture", f"Capture aborted after {written_n[0]} of {n} frames — "
+                                 "nothing was saved.")
+            return
+        n = written_n[0]
         if not path:
             eprov.discard_folder(folder)
             if not _video.ffmpeg_available():

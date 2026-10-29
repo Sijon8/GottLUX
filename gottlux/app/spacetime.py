@@ -723,6 +723,9 @@ class SpaceTimeView(QtWidgets.QWidget):
         self.ctl.set_cursor(float(t))
         QtWidgets.QApplication.processEvents()
         w, h = size if size else self.sensor_size()
+        from gottlux.app.capture import gl_ready
+        if not gl_ready(self.view):
+            return None
         try:
             return gl_to_rgb(self.view.renderToArray((int(w), int(h))))
         except Exception:
@@ -1363,8 +1366,10 @@ class SpaceTimeView(QtWidgets.QWidget):
             for label, el, az in self._STUDY_ANGLES:
                 self.view.setCameraPosition(elevation=float(el), azimuth=float(az))
                 QtWidgets.QApplication.processEvents()
-                try:
-                    rgb = gl_to_rgb(self.view.renderToArray(self._STUDY_RES))
+                try:                     # BA-19: no GL context → no render (not a crash)
+                    from gottlux.app.capture import gl_ready
+                    rgb = (gl_to_rgb(self.view.renderToArray(self._STUDY_RES))
+                           if gl_ready(self.view) else None)
                 except Exception:
                     rgb = None
                 if rgb is not None and rgb.size:

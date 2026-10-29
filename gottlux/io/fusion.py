@@ -238,10 +238,13 @@ def ebs_rate_envelope(rec, bin_s: float = 0.010):
 
 
 def _smooth(a, win_s, bin_s):
-    k = max(1, int(round(win_s / bin_s)))
+    a = np.asarray(a, float)
+    # mode="same" returns max(len(a), k) samples: a kernel longer than a short recording's
+    # series would lengthen it and break every shape downstream
+    k = min(max(1, int(round(win_s / bin_s))), len(a))
     if k <= 1:
-        return np.asarray(a, float)
-    return np.convolve(np.asarray(a, float), np.ones(k) / k, mode="same")
+        return a
+    return np.convolve(a, np.ones(k) / k, mode="same")
 
 
 def _detrend_norm(a, win_s, bin_s):

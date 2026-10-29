@@ -547,6 +547,9 @@ class TransportBar(QtWidgets.QWidget):
             QtWidgets.QMessageBox.information(self, "Save .raw",
                                              "Select a non-empty In/Out range first.")
             return
+        if hasattr(self.host, "slate_clips"):     # Multi-clip: one file per clip
+            self._write_slate(self.host.slate_clips([(t0, t1)]), f"_clip_{t0:.2f}-{t1:.2f}")
+            return
         self._write_raw(rec, [(t0, t1)], f"_clip_{t0:.2f}-{t1:.2f}")
 
     def _save_merge_raw(self):
@@ -560,7 +563,49 @@ class TransportBar(QtWidgets.QWidget):
                 self, "Merge .raw",
                 "Add at least one highlight first: drag the In/Out handles, then click 'Add'.")
             return
+        if hasattr(self.host, "slate_clips"):     # Multi-clip: one file per clip
+            self._write_slate(self.host.slate_clips(spans), f"_merged_{len(spans)}")
+            return
         self._write_raw(rec, spans, f"_merged_{len(spans)}")
+
+    def _write_slate(self, clips, suffix):
+        """Write each slate clip's spans (on its own clock) to ``<clip><suffix>.raw`` in a
+        chosen folder — a cut or merge of every clip of a Multi-clip slate at once."""
+        import os
+        if not clips:
+            QtWidgets.QMessageBox.information(
+                self, "Save .raw", "No clip has events inside the selected time.")
+            return
+        folder = QtWidgets.QFileDialog.getExistingDirectory(
+            self, f"Save {len(clips)} clip(s) → folder", "")
+        if not folder:
+            return
+        from gottlux.app.uikit import with_progress
+        from gottlux.io import writer
+        from gottlux.io.paths import open_in_file_browser, safe_name
+        lines = []
+        try:
+            for name, rec, spans in clips:
+                out = os.path.join(folder, f"{safe_name(name)}{suffix}.raw")
+                if len(spans) == 1:
+                    n = with_progress(self.window(), "Saving .raw clips",
+                                      lambda cb, r=rec, o=out, s=spans[0]:
+                                      writer.cut_clip(r, o, t0=s[0], t1=s[1], progress=cb),
+                                      label=f"Writing {name}…")
+                else:
+                    n = with_progress(self.window(), "Merging highlights → .raw",
+                                      lambda cb, r=rec, o=out, s=spans:
+                                      writer.stitch_clips(o, [(r, a, b) for a, b in s],
+                                                          progress=cb),
+                                      label=f"Stitching {name}…")["n_events"]
+                lines.append(f"{os.path.basename(out)}  ({n:,} events)")
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Save .raw", str(e))
+            return
+        open_in_file_browser(folder)
+        QtWidgets.QMessageBox.information(self, "Saved .raw",
+                                          f"Wrote {len(lines)} clip(s) →\n{folder}\n\n"
+                                          + "\n".join(lines))
 
     def _write_raw(self, rec, spans, suffix):
         import os

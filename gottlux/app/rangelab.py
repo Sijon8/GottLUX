@@ -406,7 +406,7 @@ class RangeLab(QtWidgets.QWidget):
             if bb is None:
                 return f"t={t:.2f}s"
             meas = max(abs(bb[2] - bb[0]), abs(bb[3] - bb[1]))
-            rng = float(pg_solve.estimate_range_m(meas, fov, L, W))
+            rng = float(pg_solve.range_for_pixels(L, meas, fov, W))
             return f"t={t:.2f}s  {meas:.0f}px" + (f"  ~{rng:.1f}m" if rng == rng else "")
 
         from gottlux.viz.video import render_box_track_video

@@ -519,13 +519,22 @@ class FlutterWorkbench(QtWidgets.QWidget):
             self._update_spectrum()
         else:
             self.spin_lbl.setText("rotation rate: not found (no clear periodicity)")
+        # the report goes to the recording's analysis folder (relocated when that is not
+        # writable); say where, rather than opening windows or failing silently
         try:
-            from gottlux.io.paths import analysis_subdir, open_in_file_browser
-            out = analysis_subdir(getattr(self.rec, "source_path", "") or ".", "rotation_rate")
-            ra.save_rotation_rate_report(self.rec, out)
-            open_in_file_browser(out)
-        except Exception:
-            pass
+            from gottlux.io.paths import analysis_subdir, platform_root, safe_name
+            try:
+                out = analysis_subdir(getattr(self.rec, "source_path", "") or ".",
+                                      "rotation_rate")
+                ra.save_rotation_rate_report(self.rec, out)
+            except OSError:                     # a read-only data folder: the user folder
+                out = os.path.join(platform_root(), "gottlux_results",
+                                   safe_name(self.rec.name), "rotation_rate")
+                os.makedirs(out, exist_ok=True)
+                ra.save_rotation_rate_report(self.rec, out)
+            self.spin_lbl.setToolTip(f"Report saved to {out}")
+        except Exception as e:
+            self.spin_lbl.setToolTip(f"The rotation-rate report could not be saved: {e}")
 
     # ================================================================== run
     def run_detector(self):

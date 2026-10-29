@@ -15,9 +15,13 @@ import os
 from PySide6 import QtCore, QtWidgets
 
 from gottlux.app import icons
+from gottlux.app.loader import Worker
 
 
-class _TrimWorker(QtCore.QThread):
+class _TrimWorker(Worker):
+    """The trim, off the GUI thread — a loader ``Worker``, so quitting mid-trim waits for it
+    instead of destroying a running thread."""
+
     done = QtCore.Signal(dict)
     failed = QtCore.Signal(str)
     progressed = QtCore.Signal(str)
@@ -61,7 +65,7 @@ class BatchTrimDialog(QtWidgets.QDialog):
 
         form = QtWidgets.QFormLayout()
         self.t0 = QtWidgets.QDoubleSpinBox()
-        self.t0.setRange(0.0, 100000.0); self.t0.setDecimals(3); self.t0.setSuffix(" s"); self.t0.setValue(3.0)
+        self.t0.setRange(0.0, 100000.0); self.t0.setDecimals(3); self.t0.setSuffix(" s"); self.t0.setValue(0.0)
         self.t0.setToolTip("Left bound — drop everything before this time (e.g. the ego-motion start).")
         form.addRow("Start (left bound)", self.t0)
         endrow = QtWidgets.QHBoxLayout()
@@ -127,8 +131,15 @@ class BatchTrimDialog(QtWidgets.QDialog):
             pass
         lines = "\n".join(f"  {c['out']}  ({c['n_events']:,} ev, kept {c['kept_s']:g} s)"
                           for c in m["clips"])
+        empty = [c for c in m["clips"] if not c.get("n_events")]
+        note = ""
+        if empty:                                  # say so: an empty clip is not a success
+            note = (f"\n\n{len(empty)} clip(s) came out EMPTY — the window starts after "
+                    "they end. Check Start/End against each clip's length:\n"
+                    + "\n".join(f"  {c['out']}" for c in empty))
         QtWidgets.QMessageBox.information(
-            self, "Batch-trim", f"Trimmed {m['n_clips']} clip(s) → {m['out_dir']}\n\n{lines}")
+            self, "Batch-trim",
+            f"Trimmed {m['n_clips']} clip(s) → {m['out_dir']}\n\n{lines}{note}")
 
     def _fail(self, msg):
         self.trim_btn.setEnabled(True)

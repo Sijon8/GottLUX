@@ -560,16 +560,27 @@ class MultiClipViewer(QtWidgets.QWidget):
         return max(1, int(np.ceil(np.sqrt(n))))
 
     def _relayout(self, *_):
+        # The old splitters are dropped below, and a splitter takes its children with it, so
+        # every pane (and the overlay view) first moves to a hidden holder that outlives them.
+        holder = getattr(self, "_holder", None)
+        if holder is None:
+            holder = self._holder = QtWidgets.QWidget(self)
+            holder.hide()
+        for pane in self.panes:
+            pane.setParent(holder)
+        self._overlay_wrap.setParent(holder)
         while self.container_lay.count():
             item = self.container_lay.takeAt(0)
             w = item.widget()
-            if w is not None and w is not self.hint:
+            if w is not None and w is not self.hint and w is not self._overlay_wrap:
                 w.setParent(None)
+                w.deleteLater()
         if not self.panes:
             self.hint.setParent(self.container); self.container_lay.addWidget(self.hint); self.hint.show()
             return
         self.hint.hide()
         if self.layout_cb.currentText() == "Overlay":
+            self._overlay_wrap.setParent(self.container)
             self.container_lay.addWidget(self._overlay_wrap); self._overlay_wrap.show()
             self._render_overlay()
             return
@@ -624,6 +635,32 @@ class MultiClipViewer(QtWidgets.QWidget):
     def capture_clock(self):
         """The Multi-clip slate runs on its own clock (not the app clock) — Capture uses this."""
         return self.clock
+
+    @property
+    def rec(self):
+        """The first loaded clip's recording (what the transport's MP4 capture describes)."""
+        for p in self.panes:
+            if p.rec is not None:
+                return p.rec
+        return None
+
+    def slate_clips(self, spans):
+        """``[(name, rec, local_spans)]`` — each loaded clip with the slate *spans* moved onto
+        its own clock (``local = slate + offset``) and clipped to it; what the transport's
+        'Selection → .raw' and 'Merge highlights' write, one file per clip."""
+        out = []
+        for p in self.panes:
+            if p.rec is None:
+                continue
+            local = []
+            for t0, t1 in spans:
+                a = max(float(t0) + p.offset, p.rec.t_start_s)
+                b = min(float(t1) + p.offset, p.rec.t_stop_s)
+                if b > a:
+                    local.append((a, b))
+            if local:
+                out.append((p.rec.name, p.rec, local))
+        return out
 
     def sensor_size(self):
         sizes = [(p.rec.width, p.rec.height) for p in self.panes if p.rec is not None]

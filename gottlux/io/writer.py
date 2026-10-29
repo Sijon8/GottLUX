@@ -161,7 +161,9 @@ def cut_clip(rec, out_path, t0=None, t1=None, roi=None, t_origin_us=None,
     with a fraction in ``[0, 1]``. Returns events written.
     """
     i0 = 0 if t0 is None else rec.index_at(t0, "left")
-    i1 = rec.n if t1 is None else rec.index_at(t1, "left")
+    # [t0, t1), except that a window reaching the recording's end closes it: cutting the
+    # whole clip keeps its final event
+    i1 = rec.n if (t1 is None or t1 >= rec.t_stop_s) else rec.index_at(t1, "left")
     with RawWriter(out_path, rec.width, rec.height) as w:
         if i1 > i0:
             origin = np.int64(t_origin_us) if t_origin_us is not None else np.int64(rec.t[i0])

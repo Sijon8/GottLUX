@@ -620,6 +620,8 @@ class ScreenRecordDialog(QtWidgets.QDialog):
         if not path:
             err = getattr(rec, "_writer", None)
             err = getattr(err, "error", None) if err is not None else None
+            if err is not None:                  # an exception with no message names its type
+                err = str(err) or type(err).__name__
             msg = (f"The recording could not be saved ({err})." if err
                    else "Nothing was recorded (no frames were captured).")
             QtWidgets.QMessageBox.warning(self.parent() or self, "Screen record", msg)

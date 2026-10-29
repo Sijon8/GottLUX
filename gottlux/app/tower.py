@@ -250,6 +250,9 @@ class EventRateTower(QtWidgets.QWidget):
         QtWidgets.QApplication.processEvents()
         w, h = size if size else self.sensor_size()
         try:
+            from gottlux.app.capture import gl_ready
+            if not gl_ready(self.view):
+                return None
             return gl_to_rgb(self.view.renderToArray((int(w), int(h))))
         except Exception:
             return None

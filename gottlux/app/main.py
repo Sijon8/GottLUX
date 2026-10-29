@@ -136,7 +136,8 @@ class MainWindow(QtWidgets.QMainWindow):
         slate runs on its own. Controls (spacebar, capture, export window) route here so they
         always act on the view you're looking at."""
         panel = self.tabs.currentWidget()
-        return panel.capture_clock() if hasattr(panel, "capture_clock") else self.clock
+        clock = panel.capture_clock() if hasattr(panel, "capture_clock") else None
+        return clock or self.clock
 
     def _all_clocks(self):
         clocks = [self.clock]
@@ -495,7 +496,12 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_failed(self, msg):
         self.progress.setVisible(False)
         self.status.showMessage("Load failed.")
-        QtWidgets.QMessageBox.critical(self, "Load failed", msg)
+        head, _, detail = str(msg).partition("\n\n")
+        box = QtWidgets.QMessageBox(QtWidgets.QMessageBox.Critical, "Load failed",
+                                    f"The recording could not be opened:\n\n{head}", parent=self)
+        if detail.strip():
+            box.setDetailedText(detail)             # the traceback, one click away
+        box.exec()
 
     def _sync_views(self):
         """Force every tab to render at the current cursor (the 'one moment, all views' button)."""
@@ -780,7 +786,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "Accum (exposure)": f"{self.clock.accum * 1e3:.1f} ms",
         }
         # some tabs (Multi-clip) run on their own clock; capture against that one
-        clock = panel.capture_clock() if hasattr(panel, "capture_clock") else self.clock
+        clock = (panel.capture_clock() if hasattr(panel, "capture_clock") else None) or self.clock
         cap_t0, cap_t1 = ((clock.sel_t0(), clock.sel_t1())             # honor the In/Out selection
                           if clock.has_selection() else (clock.t0, clock.t1))
         # a faithful high-res render path if the view supports it (else on-screen grab)

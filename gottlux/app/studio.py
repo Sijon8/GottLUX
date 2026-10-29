@@ -586,9 +586,15 @@ class StudioPanel(QtWidgets.QWidget):
             self, "Load shot recipe", self.folder_ed.text(), "Shot recipes (*.json)")
         if not path:
             return
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-        self.set_shot(Shot.from_dict(data.get("shot", data)))
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            shot = Shot.from_dict(data.get("shot", data) if isinstance(data, dict) else {})
+        except (OSError, ValueError, TypeError) as e:
+            QtWidgets.QMessageBox.warning(self, "Load recipe",
+                                          f"Could not read a shot recipe from\n{path}\n\n{e}")
+            return
+        self.set_shot(shot)
 
     def apply_theme(self, *_):
         self.preview.setStyleSheet(f"background:{style.BG2};")

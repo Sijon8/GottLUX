@@ -793,6 +793,7 @@ class TimelineEditor(QtWidgets.QWidget):
         form.addRow(self.cut_sel_btn)
         g_clip.setLayout(form)
         self._clip_group = g_clip
+        g_clip.setEnabled(False)          # until a clip is selected (GL-30)
         v.addWidget(g_clip)
 
         # --- the selected cell: geometry inside a canvas block ---
@@ -835,6 +836,7 @@ class TimelineEditor(QtWidgets.QWidget):
         form.addRow(self.done_btn)
         g_cell.setLayout(form)
         self._cell_group = g_cell
+        g_cell.setEnabled(False)
         v.addWidget(g_cell)
 
         # --- the visualization settings of whatever cell is selected ---
@@ -870,6 +872,7 @@ class TimelineEditor(QtWidgets.QWidget):
         form.addRow("Crop x0,y0→x1,y1", row)
         g_look.setLayout(form)
         self._look_group = g_look
+        g_look.setEnabled(False)
         v.addWidget(g_look)
 
         # --- exports ---
@@ -1847,6 +1850,7 @@ class TimelineEditor(QtWidgets.QWidget):
         """Write just the selected clip (its In/Out trim + crop ROI) to a new .raw."""
         c = self.current()
         if c is None or c["kind"] != "clip":
+            self.status.setText("Select a clip on the sequence lane to cut it.")
             return
         base = (os.path.splitext(c["rec"].source_path)[0] if c["rec"].source_path
                 else os.path.join(os.getcwd(), c["name"]))
