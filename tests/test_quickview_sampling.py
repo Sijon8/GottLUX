@@ -93,7 +93,7 @@ def test_small_file_decodes_whole(tmp_path):
 
 
 def test_evt3_samples_start_only(tmp_path):
-    from tests.test_decode_vectorized import _synth_evt3_words
+    from test_decode_vectorized import _synth_evt3_words   # pytest puts tests/ on sys.path
     words = _synth_evt3_words(60_000)
     path = tmp_path / "e3.raw"
     with open(path, "wb") as f:
