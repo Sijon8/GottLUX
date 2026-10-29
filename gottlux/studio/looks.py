@@ -547,22 +547,49 @@ class Strobe(Look):
                                             on=ev.on[sl])
         if not np.isfinite(f0) or f0 <= 0:
             f0 = 0.5 * (P["band_lo"] + P["band_hi"])
-        st = {"f0": f0, "sl": sl, "phase": (ev.t[sl] * f0) % 1.0}
-        samples = [self._raw(ev, (b + 0.5) / P["bins"], P, st)[0] for b in range(P["bins"])]
-        st["scale"] = _locked_scale(samples, 99.5)
+        phase = (ev.t[sl] * f0) % 1.0
+        order = np.argsort(phase, kind="stable")
+        st = {"f0": f0, "sl": sl, "phase": phase, "order": order,
+              "phase_sorted": phase[order]}
+        # every frame shows one of the bins, so each bin is folded once, here
+        st["bin_imgs"] = [self._raw(ev, (b + 0.5) / P["bins"], P, st)
+                          for b in range(P["bins"])]
+        st["scale"] = _locked_scale([on for on, _off in st["bin_imgs"]], 99.5)
         return st
 
     def _raw(self, ev, phi, P, st):
-        d = np.abs(((st["phase"] - phi + 0.5) % 1.0) - 0.5)
+        """ON and OFF images of the events within half a phase window of *phi*.
+
+        Only those events can carry weight, so they are found by bisecting the phases
+        sorted once in :meth:`prepare` (a window may wrap past 0 or 1) and then weighed in
+        their original order — the same terms summed in the same order as weighing every
+        event, so the images are identical, at a fraction of the cost."""
         half = 0.5 * P["width"]
+        ps, order = st["phase_sorted"], st["order"]
+        lo, hi = phi - half - 1e-9, phi + half + 1e-9
+        parts = [(max(lo, 0.0), min(hi, 1.0))]
+        if lo < 0.0:
+            parts.append((lo + 1.0, 1.0))
+        if hi > 1.0:
+            parts.append((0.0, hi - 1.0))
+        cand = np.concatenate([order[np.searchsorted(ps, a, "left"):
+                                     np.searchsorted(ps, b, "right")] for a, b in parts])
+        cand.sort()          # back in time order (the window parts never overlap)
+        d = np.abs(((st["phase"][cand] - phi + 0.5) % 1.0) - 0.5)
         m = d < half
-        w = (1.0 - d / half) * m
-        on = ev.on[st["sl"]]
-        return ev.splat(st["sl"], w, on & m), ev.splat(st["sl"], w, ~on & m)
+        cand, d = cand[m], d[m]
+        w = 1.0 - d / half
+        on = ev.on[st["sl"]][cand]
+        flat = ev.flat[st["sl"]][cand]
+        n = ev.W * ev.H
+
+        def img(sel):
+            return np.bincount(flat[sel], weights=w[sel], minlength=n).astype(
+                np.float32).reshape(ev.H, ev.W)
+        return img(on), img(~on)
 
     def render(self, ev, k, tau, P, st, colors, size):
-        phi = ((k % P["bins"]) + 0.5) / P["bins"]
-        on, off = self._raw(ev, phi, P, st)
+        on, off = st["bin_imgs"][k % P["bins"]]
         s = st["scale"]
         return [(np.clip(on / s, 0, 1), colors["on"]), (np.clip(off / s, 0, 1), colors["off"])]
 
@@ -750,10 +777,15 @@ class Radar(Look):
             step = max(1, (sl.stop - sl.start) // 400_000)
             ts, xs, ys = ev.t[sl][::step], ev.x[sl][::step], ev.y[sl][::step]
             score = {}
+            ny = max(ev.H // 2, 1)
+            ye = np.linspace(0, ev.H, ny + 1)                  # histogram2d's own edges
+            yi = np.clip(np.searchsorted(ye, ys, "right") - 1, 0, ny - 1)
+            yok = (ys >= 0) & (ys <= ev.H)
             for m in (1.0, -1.0):
                 b = self._bearing(ts, xs, ev.W, t_ref, period, direction, m, P["fov_deg"])
-                h = np.histogram2d(b, ys, bins=[720, max(ev.H // 2, 1)],
-                                   range=[[0, 360], [0, ev.H]])[0]
+                bi = np.clip(np.floor(b * 2.0).astype(np.int64), 0, 719)   # 0.5° edges
+                ok = yok & (b >= 0) & (b <= 360)
+                h = np.bincount(bi[ok] * ny + yi[ok], minlength=720 * ny).astype(float)
                 score[m] = float((h ** 2).sum())               # sharper → more concentrated
             mirror = max(score, key=score.get)
         else:
@@ -767,6 +799,8 @@ class Radar(Look):
         st["rad"] = np.hypot(xx - c, yy - c)
         st["ang"] = np.degrees(np.arctan2(xx - c, -(yy - c))) % 360.0   # clockwise from up
         st["inside"] = (st["rad"] <= st["R"]) & (st["rad"] >= st["r0"])
+        st["inside_idx"] = np.flatnonzero(st["inside"])       # the dial's pixels only
+        st["ang_inside"] = st["ang"].ravel()[st["inside_idx"]]
         rings = np.zeros((h, w), np.float32)                  # static: drawn once per shot
         for frac in (0.0, 0.5, 1.0):
             rings[np.abs(st["rad"] - (st["r0"] + frac * (st["R"] - st["r0"]))) < 0.7] = 0.25
@@ -804,10 +838,14 @@ class Radar(Look):
         layers = []
         if P["dial"]:
             boresight = (st["direction"] * 360.0 * (tau - st["t_ref"]) / st["period"]) % 360.0
-            d = np.abs(((st["ang"] - boresight + 180.0) % 360.0) - 180.0)
-            inside = st["inside"]
-            wedge = (inside & (d <= P["fov_deg"] / 2)).astype(np.float32) * 0.10
-            edge = (inside & (np.abs(d - P["fov_deg"] / 2) < 0.6)).astype(np.float32) * 0.35
+            # the wedge and its edge, computed on the dial's pixels only
+            d = np.abs(((st["ang_inside"] - boresight + 180.0) % 360.0) - 180.0)
+            shape = st["inside"].shape
+            wedge = np.zeros(shape, np.float32)
+            edge = np.zeros(shape, np.float32)
+            wedge.ravel()[st["inside_idx"]] = (d <= P["fov_deg"] / 2).astype(np.float32) * 0.10
+            edge.ravel()[st["inside_idx"]] = (np.abs(d - P["fov_deg"] / 2) < 0.6).astype(
+                np.float32) * 0.35
             guide = np.full(3, 0.75 if colors["bg"].mean() < 0.5 else 0.25, np.float32)
             layers += [(wedge + edge, colors["on"]), (st["rings"], guide)]
         layers += [(np.clip(a / s, 0, 1), colors["on"]), (np.clip(o / s, 0, 1), colors["off"])]
