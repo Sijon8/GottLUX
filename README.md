@@ -225,15 +225,33 @@ is even interesting:
 
 The **Canvas composer** (GUI: *Tools → Canvas composer…*) places several recordings —
 possibly from different collects, sensors, and time bases — as independently positioned,
-sized, and styled cells on one fixed canvas. Each cell carries its own visualization
-settings (accumulation mode and window, tone-map expression, colormap, an optional source
-ROI crop) **and its own clock mapping** (canvas-time offset, a time scale for
-slow-motion/speed-up, looping), so a real-time wide view can play beside a 10×
-slow-motion crop of the same moment. A composition is a small JSON spec
-(`.gottlux-canvas.json`) — save it, reload it, re-render it — and exports two ways:
-rendered frame-by-frame to **MP4**, or re-encoded as **events** into one composited
-EVT2.1 **`.raw`** (geometry and clock mapping applied to the merged stream; the spec
-rides along inside the export folder so the styled view stays reproducible).
+sized, and styled cells on one fixed canvas. Each cell carries its own **visualization** —
+the classic event frame (accumulation mode and window, tone-map expression, colormap) or
+any **Studio look** (polarity trails, accumulated frame, time surface, light painting,
+space-time cloud, stroboscope, waterfall, flicker hue, radar sweep) with its own
+parameters and ON/OFF palette — an optional source ROI crop, a label and a time stamp,
+**and its own clock mapping** (canvas-time offset, a time scale for slow-motion/speed-up,
+looping). So a real-time wide view can play beside a 10× slow-motion crop of the same
+moment, or one moment can be shown as four visualizations side by side: **Visualization
+grid…** turns a clip into one labelled cell per chosen look, tiled over the canvas. A
+composition is a small JSON spec (`.gottlux-canvas.json`) — save it, reload it, re-render
+it — and exports two ways: rendered frame-by-frame to **MP4, WebM or GIF** (frame rate,
+size and quality chosen in the deck, rendered off the GUI thread with a Cancel button), or
+re-encoded as **events** into one composited EVT2.1 **`.raw`** (geometry and clock mapping
+applied to the merged stream; the spec rides along inside the export folder so the styled
+view stays reproducible). From the command line, `gottlux-canvas` re-renders a saved
+composition, or builds a mosaic on the fly:
+
+```bash
+gottlux-canvas --mosaic clip.raw --looks frame,trails,surface,spacetime --labels -o look.mp4
+gottlux-canvas look.gottlux-canvas.json --fps 60 --width 1920 -o look_hd.mp4
+```
+
+**Colour schemes.** Every colormap and ON/OFF palette picker lists one registry: the
+built-in maps plus your own. *Tools → Colour schemes…* (or "Add a colour scheme…" at the end
+of any colormap list) builds a colormap from colour stops or a palette from three colours,
+and imports or exports schemes as `.json` to share them; a new scheme appears in every
+picker at once — viewer, canvas cells, timeline, Studio, figures.
 
 The **Timeline** tab is the sequential side of the same engine, and shares its cell
 machinery outright. It compiles into a *program*: every sequential item is a canvas — a

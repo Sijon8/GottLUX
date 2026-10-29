@@ -60,6 +60,37 @@ Each fixed item has a regression test in `tests/test_audit_fixes.py` unless note
 | GL-39 | High | CI | **CI aborted (exit 134) on Python 3.10 and 3.11 after every test had passed**, from the 18 Oct publish (`3e34bfc`) on; 3.12, 3.13 and Windows passed, and `95ebdec` had passed. Cause: **PySide6 6.12.0** (released 8 Oct 2026, so CI picked it up between the two runs), not GottLUX code. Its Linux wheels drop a reference to `True` on every signal emit and to `None` on every call that returns nothing (PYSIDE-3477), so at interpreter shutdown `True` reaches a refcount of zero: `Fatal Python error: bool_dealloc`. Python 3.12+ is immune (`True`/`None` are immortal there). | The CI annotations: exit 134, with the end-of-run warnings already reported. Reproduced in a `python:3.11` Linux container: the full suite aborts at shutdown with `bool_dealloc`. Minimal check on x86-64 Linux, Python 3.11.17: 100,000 `Signal(bool).emit(True)` calls abort with `bool_dealloc` and 100,000 `setObjectName()` calls with `none_dealloc` on 6.12.0; on 6.11.2 both leave the refcounts unchanged. PySide6 6.12.0 on Windows is unaffected. | `PySide6>=6.6,!=6.12.0` in `pyproject.toml` (`gui`, `all`) and `requirements.txt`; lift it once a fixed release ships. No test (a dependency pin). |
 | GL-40 | Medium | GUI | **Closing a window or quitting while a decode was running aborted the process** (`QThread: Destroyed while thread '' is still running`). The loader threads (`RecordingLoader`, `SampledLoader`, `PreviewPrefetcher`, `DetectorWorker`) were held only by the window that started them, so when it closed and was collected, or Python exited, Qt destroyed a running thread. | Running `tests/test_quickview_sampling.py`, or `test_quickview_opens_h5_and_capture_folder`, on its own on Linux: exit 134 with that message. Now 3 of 3 runs exit 0 for each. | Every loader is a `gottlux.app.loader.Worker`, referenced until it finishes. `gottlux-gui`, `gottlux-view` and the test session wait for running workers at exit (`wait_for_workers`). A decode cannot be cancelled midway, so it completes its cache first. Test: `test_worker_outlives_its_owner_and_is_waited_for`. |
 
+## Button and action audit — 2026-10-29
+
+Every button, toolbar and menu action, checkable control and combo entry of the main window
+(all tabs and the split pane), the Canvas composer, the Timeline, the Studio and the quick
+viewer was triggered with a recording loaded (1,228 actions, offscreen, dialogs stubbed and
+recorded, each tab in its own process with a hang watchdog), plus 63 end-to-end exports
+whose files were read back (videos decoded frame by frame, `.raw` re-opened). Tests:
+`tests/test_audit_buttons.py`.
+
+| ID | Sev | Area | Issue | Fix |
+|---|---|---|---|---|
+| BA-01 | High | Capture / screen rec | `qimage_to_rgb` returned a view of a freed QImage when a row had no padding (width divisible by 4 — every common screen): garbled frames, then an access violation in the encoder. | The frame is copied. |
+| BA-02 | High | Main window | On the Studio tab Capture…, Export…, tool bundle, user script and the space bar raised: the Studio's `capture_clock()` is `None`. | Fall back to the app clock. |
+| BA-03 | High | Multi-clip | Layout › Overlay deleted every pane with the dropped splitter; switching back raised. | Panes and the overlay view move to a hidden holder first. |
+| BA-04 | High | Studio, Batch-trim | Their workers were plain QThreads, not waited for at exit: quitting mid-export aborted. | Both are `loader.Worker`s. |
+| BA-05 | High | Range lab | *Analysis video* always failed: it called a range function that does not exist. | `photogrammetry.range_for_pixels`. |
+| BA-06 | Medium | Capture | *Abort* kept the partial MP4 and reported the planned frame count. | An aborted capture is discarded and says so; counts are the frames written. |
+| BA-07 | Medium | Multi-clip | Selection → .raw, Merge highlights and MP4 on the slate's transport always said "Load a recording first". | The slate exposes its clips; each clip is cut on its own clock, one file per clip. |
+| BA-08 | Medium | Canvas composer | A second cell of the same file got the source `<path>_2`, which does not reload. | Cells of one recording share its source; a save notes cells with no file; relative sources resolve beside the spec. |
+| BA-09 | Medium | Fusion lab | Recordings shorter than ~2 s failed: `np.convolve(mode="same")` returns the kernel length when it is longer. | The kernel is clamped to the series. |
+| BA-10 | Medium | Studio | *Load recipe…* with a malformed file raised out of the slot. | A warning dialog. |
+| BA-11 | Medium | Batch-trim | A window past a clip's end wrote empty 80-byte `.raw` files and reported success (default start 3 s). | Empty outputs are listed in the result; the start defaults to 0. |
+| BA-12 | Low | Export | *Save 3-D snapshot* said Saved with no framebuffer. | A null grab or a failed save writes nothing and reports nothing. |
+| BA-13 | Low | `.raw` cut | `cut_clip` used `[t0, t1)`, so a whole-clip cut dropped the final event. | A window reaching the recording's end is closed. |
+| BA-14 | Low | Timeline | With nothing selected the trim and cell controls stayed live (GL-30) and *Cut selected* did nothing. | Disabled until a selection; *Cut selected* says what to select. |
+| BA-15 | Low | Workbench | *Find rotation rate* opened a file browser unasked and hid write errors. | The report path (or the error) is in the label's tooltip; a read-only data folder falls back to the user folder. |
+| BA-16 | Low | Loading | Load failures showed a raw traceback. | The message, with the traceback under *Details*. |
+| BA-17 | Low | Screen rec | An exception with no message read "could not be saved ()". | Its type is named. |
+| BA-18 | Info | Exports | Formats, controls and encoder settings differed between the Studio and the composer / Timeline (MP4 only, fixed 30 fps, no cancel). | One encoder and one set of options everywhere (see the changelog). Capture stays MP4 (screen grabs are sequential). |
+| BA-19 | Low | Space-time | Exporting the rotor-ladder study without an OpenGL context crashed in `renderToArray`. | GL renders are skipped without a context (`capture.gl_ready`). |
+
 ## Open — found, not changed
 
 | ID | Sev | Area | Issue | Evidence / next step |
@@ -67,7 +98,6 @@ Each fixed item has a regression test in `tests/test_audit_fixes.py` unless note
 | GL-27 | Medium | Detectors | **The hummingbird detector breaks one bird into 35 short tracks**, and per-step frequencies jump between about 17 Hz and 120 Hz. | `tracks.png` after GL-01: 35 targets in a 3 s clip with two birds. The match gate (60 px, 8 coasted steps of 20 ms) is smaller than the bird's movement during the dart at 0.78 s, and each step's peak is the strongest bin in a 0.3 s window (4 Hz resolution, harmonics compete). A tracked-box spectrum (`examples/hummingbird_gallery.py`) gives a stable 64–76 Hz line. Next: a velocity-aware gate, and harmonic-sum peak picking. |
 | GL-28 | Low | GUI | The panorama's degree-axis strip overwrites the bottom 14 sensor rows instead of sitting below the image, so those rows can't be seen or labelled. | `_pano_axis_overlay` writes `out[-14:]`. Moving it below the image changes the panorama pixel geometry the box labels (GL-23/24) rely on, so it's left for the owner. |
 | GL-29 | Low | GUI | EBS viewer scrubbing is quantised to 1/1000 of the recording (3.6 s steps on a 1-hour file). | `QSlider(0..1000)`. |
-| GL-30 | Low | GUI | Timeline "Selected clip" panel: with no clip selected, the trim slider and In/Out boxes stay enabled and show 0.000 s. | Screenshot. |
 | GL-31 | Low | Plots | `viz.theme.apply()` rewrites matplotlib's global `rcParams` for the whole process, so a user who imports `gottlux.viz` gets their own figures restyled. | Use `mpl.rc_context(_RC)` per figure builder. |
 | GL-32 | Low | Metrics | Staring runs report rotation-coverage metrics (`coverage_azimuth_deg 58`, `coverage_gain_vs_static`) from the default 58° FOV. | `metrics.json` of every staring run. |
 | GL-33 | Low | Lint | 3,336 ruff findings; CI lint is `continue-on-error`. 2,934 are the house style (E702 1,970, E501 866, E701 98). The rest are worth a pass: 16 F841 unused locals (two of them were GL-15 and GL-17), 7 B007, 2 B904, 52 B905. | `ruff check . --statistics`. |

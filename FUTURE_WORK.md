@@ -50,10 +50,13 @@ Items marked 🧭 are good first issues.
   time-synchronized `.wav` to the canvas clock (reusing the fusion lab's envelope
   cross-correlation) and muxing it into the MP4 export would make composited videos
   self-contained (`gottlux/core/canvas.py`, `gottlux/app/canvas.py`).
-- **Per-cell labels & timecode burn-in** 🧭 — optional rendered cell titles (source name,
-  time scale) and a canvas-clock timecode overlay in `render_frame`/`export_video`, so an
-  exported composition explains itself without consulting the sidecar spec
-  (`gottlux/core/canvas.py`).
+- **Canvas-clock timecode** 🧭 — cells now carry labels and per-cell time stamps
+  (`CanvasClip.label` / `stamp`); a single canvas-clock timecode overlay and the cell's time
+  scale in its label are still open (`gottlux/core/canvas.py`).
+- **Parallel cell rendering in the preview** — the composer renders every cell on the GUI
+  thread each tick; heavy looks (flicker hue, space-time, radar at large sizes) make a busy
+  canvas play below real time. Rendering cells on a worker pool (they are independent) and
+  dropping frames while playing would keep the preview smooth (`gottlux/app/canvas.py`).
 - **User-script sandboxing** — user scripts (`--run-script`) execute with the full
   privileges of the Python interpreter, by design (they may import anything, gottlux
   included). There is **no sandboxing**: running a script from an untrusted source is

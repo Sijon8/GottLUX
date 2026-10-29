@@ -341,7 +341,9 @@ canvas (Full, 1/2 horizontal, 1/2 vertical, 1/3, 1/4 quadrant, 2/3), drags snap 
 (toggleable), and **Auto-tile cells** lays every cell of the block into the best-fit grid.
 
 **Exports.** **Export video…** renders the whole program — segments, overlay lane, titles — frame
-by frame to an MP4. **Export .raw…** stays events-only: a plain sequence stitches end-to-end into
+by frame, as MP4, WebM or GIF at the frame rate, size and quality set above it, off the GUI
+thread with Cancel. Each clip or cell can use any visualization (the event frame or a Studio
+look, with a label and time stamp), exactly as in the Canvas composer. **Export .raw…** stays events-only: a plain sequence stitches end-to-end into
 one combined, byte-valid EVT2.1 `.raw` whose segments share a single monotonic clock (trim + crop
 + gap, exactly as before), while a timeline containing canvas blocks composites the events into the
 canvas geometry instead and writes the composition JSON as its sidecar. Titles and per-clip
@@ -415,14 +417,34 @@ Method notes for every look: [STUDIO.md](STUDIO.md).
 A separate composition window: several recordings — possibly from different collects,
 sensors, and time bases — placed as draggable, resizable cells on one fixed-size canvas.
 A settings deck edits the *selected* cell live: placement, source ROI crop, clock mapping
-(canvas-time offset, a time scale for slow-motion/speed-up, looping), and look
-(accumulation mode + window, tone-map expression, colormap) — so a real-time wide view
-can play beside a 10× slow-motion crop of the same moment. A shared transport plays and
-scrubs the canvas timeline. Compositions save/load as a small JSON spec
-(`.gottlux-canvas.json`) and export as an **MP4** (rendered frames) or as one composited
-EVT2.1 **`.raw`** — the events geometrically remapped into their cells and rescaled onto
-the canvas clock, with the spec written into the export folder so the styled view stays
-reproducible. (An event file carries events, not rendering: colormap/tone-map/
+(canvas-time offset, a time scale for slow-motion/speed-up, looping), and its
+**visualization**:
+
+- **Event frame** — accumulation mode + window, tone-map expression, colormap;
+- or any **Studio look** — polarity trails, accumulated frame, time surface, light
+  painting, space-time cloud, stroboscope, waterfall, flicker hue, radar sweep — with its
+  own parameters (the same auto-built panel as the Studio), an ON/OFF palette, denoise and
+  bloom;
+- a **Label** and a **Time stamp** burned into the cell, and **Fit**: *Auto* (the event
+  frame fills its cell, a look keeps its aspect), *Keep aspect*, or *Stretch*.
+
+So a real-time wide view can play beside a 10× slow-motion crop of the same moment, or the
+same moment can be shown several ways at once. **Visualization grid…** does that in one
+step: tick the looks, and the selected clip becomes one labelled cell per look, tiled over
+the canvas. **Duplicate** copies a cell (then give the copy another look), **Auto-tile**
+lays every cell into the best-fit grid, and the **Size…** list next to W × H sets a standard
+canvas (cells keep their places). A shared transport plays and scrubs the canvas timeline.
+
+Compositions save/load as a small JSON spec (`.gottlux-canvas.json`; a source given
+relative to the spec resolves beside it) and export as a **video** or as one composited
+EVT2.1 **`.raw`**. The video's **format** (MP4 · WebM · GIF), **frame rate**, **size** (the
+canvas at 100–25 % or a fixed width) and **quality** are set in the *Composition* group and
+remembered; a line under them says what will be written (format, size, frames). The export
+renders every cell as previewed on a worker thread behind a progress dialog with
+**Cancel** (a cancelled export leaves nothing behind). The `.raw` carries the events
+geometrically remapped into their cells (where the picture is, so *Keep aspect* places them
+letterboxed) and rescaled onto the canvas clock, with the spec written into the export
+folder so the styled view stays reproducible. (An event file carries events, not rendering: colormap/tone-map/
 accumulation apply only at render time, which is exactly what the spec preserves.) Both
 exports land in a provenance folder documenting every cell's source recording and
 settings — see [Export provenance folders](#export-provenance-folders).
@@ -437,6 +459,10 @@ cursor's accumulation window) and the live viewer's ROI — so what runs is exac
 on screen:
 
 - **Canvas composer…** — the composition window above.
+- **Colour schemes…** — make your own colormaps (colour stops: pick, add, remove,
+  reverse) and ON/OFF/background palettes, or import/export them as `.json`. They are saved
+  in your user folder and appear in every colour picker at once; every colormap list also
+  ends with **Add a colour scheme…**.
 - **Run user script on current view…** — pick a `.py` file defining `process(win, ctx)`
   and it runs on exactly the portion in view; whatever it returns (arrays, a matplotlib
   figure, a derived event stream) is saved into a provenance-stamped run folder. The

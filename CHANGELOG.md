@@ -7,6 +7,54 @@ All notable changes to GottLUX are documented here. The project follows
 
 ### Added
 
+- **Several visualizations on one canvas.** A Canvas composer cell or Timeline clip can be
+  drawn by any Studio look — polarity trails, accumulated frame, time surface, light
+  painting, space-time cloud, stroboscope, waterfall, flicker hue, radar sweep — with its
+  own parameters, palette, denoise and bloom, beside classic event-frame cells; every cell
+  can carry a label and a time stamp and a Fit (auto / keep aspect / stretch). The
+  composer gains **Visualization grid…** (one clip → one labelled cell per chosen look,
+  tiled), **Duplicate**, **Auto-tile** and canvas size presets. The spec is version 2;
+  version-1 specs load unchanged. `gottlux-canvas` renders a saved composition, or a
+  labelled mosaic of recordings × looks, from the command line.
+- **Colour schemes.** One registry (`gottlux.core.colors`) behind every colormap and
+  ON/OFF palette picker; *Tools → Colour schemes…* creates colormaps from colour stops and
+  palettes from three colours, and imports/exports them as `.json`. User schemes are saved
+  per user, registered with matplotlib, and appear in every picker at once.
+- **Exports in any format, consistently.** One encoder (`gottlux.viz.encode`) for the
+  Studio, the composer, the Timeline and the CLI: MP4, WebM, GIF or PNG frames, one 1–10
+  quality scale, frame rate and output size chosen in the deck and remembered, rendered
+  off the GUI thread with Cancel, partial files removed on cancel. Provenance records each
+  cell's visualization.
+
+### Changed
+
+- **Faster, with identical pixels.** Colormap lookups through packed tables (2–4× over
+  matplotlib's call, bit-exact); canvas text items drawn once and composited over their
+  own box; Studio layers composited in place; the stroboscope folds each phase bin once
+  (80 → 6 ms a frame); EBS viewer counts with `bincount`; exports render ahead on worker
+  threads (≈1.5–1.8×). The Studio preview stops looping while its tab is hidden. Every
+  fast path is pinned to the code it replaced by a test.
+
+### Fixed
+
+- Screen recording of the current view and full-screen/window grabs read freed memory at
+  widths divisible by 4 (garbled frames, then a crash).
+- Capture, Export, tool bundle, user script and the space bar raised on the Studio tab.
+- Multi-clip: choosing the Overlay layout deleted every pane; Selection → .raw, Merge
+  highlights and MP4 on the slate never worked (they now write one file per clip, each on
+  its own clock).
+- Quitting during a Studio export or a batch trim aborted the process.
+- Range lab's analysis video always failed (a missing range function).
+- Capture's Abort reported a finished video; it now discards the partial export.
+- The composer lost the second cell of one file on Save → Load.
+- The Fusion lab failed on recordings shorter than about 2 s.
+- A malformed Studio recipe raised instead of saying so; a batch trim wrote empty clips
+  silently (the default start is now 0); a 3-D snapshot with no framebuffer said "Saved";
+  a whole-clip cut dropped its final event; the Timeline's trim and cell controls were
+  live with nothing selected; *Find rotation rate* opened a file browser unasked; load
+  errors showed a raw traceback (now under *Details*); an empty screen-recording error
+  read "()"; exporting the rotor-ladder study without an OpenGL context crashed.
+
 - **Panorama bounding-box labeling in the EBS viewer.** The annotation row gains a
   checkable **▣ Label box** button: with it active in the *Panorama* or *Phase-Locked
   Pano* view, dragging a rectangle over the map records a ground-truth bounding box for

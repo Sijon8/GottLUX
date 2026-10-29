@@ -391,3 +391,31 @@ web port's automatic period is a coarser autocorrelation estimate). The strobosc
 0.05 Hz. The flicker look is excluded, because the two use different FFT code (numpy versus
 the web app's radix-2 port). `test_web_spec_block_in_sync` fails while the generated block is
 stale.
+
+## Looks on the canvas
+
+Every look also draws **canvas cells** in the Canvas composer and the Timeline
+(`CanvasClip.look`, `gottlux/studio/cell.py`). A cell is asked for the picture at an
+arbitrary recording time τ (the canvas clock through the cell's offset, time scale and
+loop), so the cell treats its recording as one long shot and renders the look at τ
+directly (`ShotRenderer.frame_at`). The space-time orbit and the stroboscope's phase take
+their frame index from how far τ is through the recording: an orbit turns once over the
+clip, and the strobe plays its *Loops* over one pass.
+
+Events are held in chunks of at most 2 M events (never shorter than 0.25 s); a short clip
+is one chunk and renders exactly as the Studio. Exposure stays locked across chunks: the
+scales a look measures, the strobe's f0 and the radar's period and column sign come from
+the clip's first chunk, so the brightness does not step at a chunk boundary and the
+preview and the export agree. Light painting without a fade paints from the start of its
+chunk. A look keeps its aspect inside the cell, letterboxed on the palette background,
+unless the cell is set to *Stretch*.
+
+## One encoder
+
+The Studio, the Canvas composer, the Timeline and `gottlux-canvas` all write through
+`gottlux.viz.encode.encode_frames`: H.264 (`yuv420p`, `+faststart`, preset `fast`) or VP9
+from one 1–10 quality scale (H.264 crf 34…16, VP9 crf 50…18), GIF with one palette
+measured on up to 8 frames spread over the clip (delays round to 10 ms, so the effective
+rate is reported), PNG frames for editing elsewhere. Frames are rendered two ahead on
+worker threads while the encoder writes, which is about 1.5–1.8× faster and changes no
+pixel; a cancelled export removes its partial file.
