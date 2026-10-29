@@ -56,20 +56,36 @@ def prepare_events(rec, shot: Shot, t0: float, t1: float, lookback: float) -> Ev
 
 
 def composite(layers, bg, shape) -> np.ndarray:
+    """Layers over the background: added on a dark one (ON + OFF overlapping read as
+    white), alpha-blended on a light one. A solid-colour layer is applied per channel in
+    place — the same IEEE operations in the same order as the full-array form, so the
+    pixels are identical, without the (h, w, 3) temporaries."""
     h, w = shape
+    bg = np.asarray(bg, np.float32)
     out = np.empty((h, w, 3), np.float32)
     out[:] = bg
     additive = float(np.mean(bg)) < 0.5
+    tmp = None
     for a, col in layers:
-        a = np.asarray(a, np.float32)[..., None]
+        a = np.asarray(a, np.float32)
         col = np.asarray(col, np.float32)
         if col.ndim == 1:
-            col = col[None, None, :]
-        if additive:
-            out += a * col
+            if tmp is None:
+                tmp = np.empty((h, w), np.float32)
+            for c in range(3):
+                oc = out[..., c]
+                np.multiply(a, col[c], out=tmp)
+                if not additive:
+                    oc *= (1.0 - a)
+                oc += tmp
         else:
-            out = out * (1.0 - a) + a * col
-    return np.clip(out, 0.0, 1.0)
+            a3 = a[..., None]
+            if additive:
+                out += a3 * col
+            else:
+                out = out * (1.0 - a3) + a3 * col
+    np.clip(out, 0.0, 1.0, out=out)
+    return out
 
 
 def speed_text(speed: float) -> str:
@@ -178,12 +194,31 @@ class ShotRenderer:
             arr = 1.0 - (1.0 - arr) * (1.0 - np.clip(self.shot.bloom * blur, 0, 1))
             pil = Image.fromarray((np.clip(arr, 0, 1) * 255 + 0.5).astype(np.uint8))
         if self.strip_h:
-            canvas = Image.new("RGB", (self.out_w, self.out_h + self.strip_h),
-                               tuple(int(c * 255 * 0.6) for c in self.colors["bg"]))
+            canvas = self._strip_base().copy()
             canvas.paste(pil, (0, 0))
             pil = canvas
         self._overlay(pil, k, tau)
         return np.asarray(pil)
+
+    def _strip_base(self):
+        """The frame below the picture: the dimmed strip with the event-rate trace, drawn
+        once per shot (only the playhead moves). The trace starts 2 px under the picture,
+        so pasting the picture over this image never touches it."""
+        from PIL import Image, ImageDraw
+        base = getattr(self, "_strip_img", None)
+        if base is None:
+            base = Image.new("RGB", (self.out_w, self.out_h + self.strip_h),
+                             tuple(int(c * 255 * 0.6) for c in self.colors["bg"]))
+            if self._rate is not None:
+                d = ImageDraw.Draw(base)
+                y0 = self.out_h + 2
+                hh = self.strip_h - 4
+                col = tuple(int(c * 255) for c in self.colors["on"])
+                for xi, rv in enumerate(self._rate):
+                    if rv > 0:
+                        d.line([(xi, y0 + hh), (xi, y0 + hh - max(1, int(rv * hh)))], fill=col)
+            self._strip_img = base
+        return base
 
     def _overlay(self, pil, k, tau):
         from PIL import ImageDraw
@@ -223,13 +258,7 @@ class ShotRenderer:
                 col = tuple(int(c * 255) for c in self.colors[key])
                 d.rectangle([x, yb, x + sw, yb + sw], fill=col)
                 x -= pad
-        if self.strip_h and self._rate is not None:
-            y0 = self.out_h + 2
-            hh = self.strip_h - 4
-            col = tuple(int(c * 255) for c in self.colors["on"])
-            for xi, rv in enumerate(self._rate):
-                if rv > 0:
-                    d.line([(xi, y0 + hh), (xi, y0 + hh - max(1, int(rv * hh)))], fill=col)
+        if self.strip_h and self._rate is not None:      # the trace is in _strip_base
             px = int((tau - self.t0) / max(self.t1 - self.t0, 1e-9) * (self.out_w - 1))
             d.line([(px, self.out_h), (px, self.out_h + self.strip_h)], fill=ink, width=2)
 

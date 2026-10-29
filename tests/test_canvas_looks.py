@@ -253,3 +253,59 @@ def test_composer_exports_a_gif_with_mixed_looks(qapp, tmp_path, monkeypatch, ex
     vis = [u["visualization"] for u in folder.usage]
     assert vis[0] == "Event frame" and vis[1].startswith("Polarity trails")
     win.close()
+
+
+# ---------------------------------------------------------------------- fit in the cell
+def test_fit_keeps_aspect_on_the_canvas_background(rec):
+    spec = cv.CanvasSpec(width=200, height=48, background=(9, 99, 9), clips=[
+        cv.CanvasClip(source="r", rect=(0, 0, 200, 48), fit="fit")])
+    f = cv.render_frame(spec, {"r": rec}, 0.2)
+    # a 64×48 sensor in a 200×48 cell: a 64-px picture centred, background either side
+    assert tuple(f[24, 2]) == (9, 99, 9) and tuple(f[24, 197]) == (9, 99, 9)
+    assert cv.fit_rect((64, 48), (0, 0, 200, 48)) == (68, 0, 64, 48)
+    stretched = cv.render_frame(cv.CanvasSpec(width=200, height=48, background=(9, 99, 9),
+                                              clips=[cv.CanvasClip(source="r",
+                                                                   rect=(0, 0, 200, 48))]),
+                                {"r": rec}, 0.2)
+    assert tuple(stretched[24, 2]) != (9, 99, 9)       # 'auto' still fills, as before
+
+
+def test_stretched_look_fills_its_cell(rec):
+    clip = cv.CanvasClip(source="r", rect=(0, 0, 200, 60), look="radar", fit="stretch")
+    rgb = cv.render_cell(clip, rec, 0.3)
+    bg = rgb[30, 100]
+    cols = np.where((np.abs(rgb.astype(int) - bg).sum(-1) > 30).any(axis=0))[0]
+    assert cols.max() - cols.min() > 150               # the dial now spans the width
+
+
+def test_raw_export_places_events_where_the_picture_is(rec, tmp_path):
+    import gottlux as eb
+    spec = cv.CanvasSpec(width=200, height=48, clips=[
+        cv.CanvasClip(source="r", rect=(0, 0, 200, 48), fit="fit")])
+    res = cv.export_raw(spec, {"r": rec}, str(tmp_path / "f.raw"))
+    out = eb.load(res["path"])
+    xs = np.asarray(out.x)
+    assert xs.min() >= 68 and xs.max() < 68 + 64
+
+
+def test_canvas_cli_builds_a_mosaic(tmp_path):
+    from gottlux.io import writer
+    from gottlux.run import canvas_cli
+    r = _blink_rec(dur=0.3)
+    raw = str(tmp_path / "blink.raw")
+    writer.write_raw(raw, np.asarray(r.x), np.asarray(r.y), np.asarray(r.p),
+                     np.asarray(r.t), width=r.width, height=r.height)
+    out = str(tmp_path / "mosaic.gif")
+    assert canvas_cli.main(["--mosaic", raw, "--looks", "frame,trails,surface",
+                            "--size", "192x48", "--labels", "--fps", "10", "-o", out]) == 0
+    from gottlux.viz import encode
+    got = encode.probe(out)
+    assert got["width"] == 192 and got["frames"] == round(r.duration_s * 10)
+    spec = cv.load_spec(str(tmp_path / ("mosaic" + cv.SPEC_SUFFIX)))
+    assert [c.visualization for c in spec.clips] == ["frame", "trails", "surface"]
+    assert all(c.fit == "fit" for c in spec.clips) and spec.clips[1].label == "Polarity trails"
+    # and the saved spec re-renders through the same command
+    out2 = str(tmp_path / "again.gif")
+    assert canvas_cli.main([str(tmp_path / ("mosaic" + cv.SPEC_SUFFIX)), "--fps", "10",
+                            "-o", out2]) == 0
+    assert encode.probe(out2)["frames"] == got["frames"]

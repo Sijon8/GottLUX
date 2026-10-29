@@ -28,7 +28,8 @@ at a chunk boundary and the preview and the export agree whichever moment is sho
 Light painting without a fade paints from the start of the chunk it is in.
 
 The picture keeps the look's aspect ratio inside the cell (letterboxed with the palette
-background) — a radar dial stays round and a space-time box keeps its proportions.
+background) — a radar dial stays round and a space-time box keeps its proportions — unless
+the cell asks to be stretched (``CanvasClip.fit = "stretch"``).
 
 Cells are cached (:func:`cell_for`) by recording and settings, so playback re-renders
 without re-slicing; a changed setting builds a new cell. Thread-safe: an export worker and
@@ -69,8 +70,10 @@ class LookCell:
     """One cell's look over one recording: ``frame(tau)`` → ``(h, w, 3)`` uint8."""
 
     def __init__(self, rec, look: str, params=None, palette: str = "fire-ice", roi=None,
-                 denoise: bool = False, bloom: float = 0.0, size=(320, 240)):
+                 denoise: bool = False, bloom: float = 0.0, size=(320, 240),
+                 stretch: bool = False):
         self._rec = weakref.ref(rec)
+        self.stretch = bool(stretch)
         self.look = get_look(look)
         self.P = self.look.resolve(params or {})
         self.size = (max(2, int(size[0])), max(2, int(size[1])))
@@ -151,6 +154,9 @@ class LookCell:
             r = self._renderer(tau)
             img = r.frame_at(tau, self.index_at(tau))
             bg = tuple(int(round(c * 255)) for c in r.colors["bg"])
+        if self.stretch and img.shape[1::-1] != self.size:
+            from PIL import Image
+            return np.asarray(Image.fromarray(img).resize(self.size, Image.BILINEAR))
         return letterbox(img, self.size, bg)
 
     def stamp(self, tau) -> str:
@@ -182,23 +188,23 @@ def letterbox(img, size, bg=(0, 0, 0)) -> np.ndarray:
     return out
 
 
-def _key(rec, look, params, palette, roi, denoise, bloom, size):
+def _key(rec, look, params, palette, roi, denoise, bloom, size, stretch):
     return (id(rec), int(rec.n), float(rec.t_start_s), look,
             json.dumps(params or {}, sort_keys=True, default=str), str(palette),
             None if roi is None else tuple(int(v) for v in roi), bool(denoise),
-            round(float(bloom), 4), (int(size[0]), int(size[1])))
+            round(float(bloom), 4), (int(size[0]), int(size[1])), bool(stretch))
 
 
 def cell_for(rec, look, params=None, palette="fire-ice", roi=None, denoise=False, bloom=0.0,
-             size=(320, 240)) -> LookCell:
+             size=(320, 240), stretch=False) -> LookCell:
     """The cached :class:`LookCell` for these settings (built on first use)."""
-    key = _key(rec, look, params, palette, roi, denoise, bloom, size)
+    key = _key(rec, look, params, palette, roi, denoise, bloom, size, stretch)
     with _cache_lock:
         cell = _cache.get(key)
         if cell is not None and cell._rec() is rec:
             _cache.move_to_end(key)
             return cell
-    cell = LookCell(rec, look, params, palette, roi, denoise, bloom, size)
+    cell = LookCell(rec, look, params, palette, roi, denoise, bloom, size, stretch)
     with _cache_lock:
         _cache[key] = cell
         _cache.move_to_end(key)

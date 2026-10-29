@@ -49,7 +49,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="format + width + fps in one go")
     p.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                    help="a look parameter (repeatable), e.g. --set tau_ms=8")
-    p.add_argument("--palette", choices=sorted(PALETTES), default=None)
+    p.add_argument("--palette", default=None,
+                   help=f"ON/OFF palette: {', '.join(sorted(PALETTES))} or one of your own "
+                        "colour schemes")
     p.add_argument("--bloom", type=float, default=None)
     p.add_argument("--gamma", type=float, default=None)
     p.add_argument("--title", default=None)

@@ -301,6 +301,8 @@ def cell_usage(clip, source, **fields) -> dict:
         row["label"] = str(clip.label)
     if getattr(clip, "stamp", False):
         row["stamp"] = True
+    if getattr(clip, "fit", "auto") != "auto":
+        row["fit"] = str(clip.fit)
     row.update({k: v for k, v in fields.items() if v is not None})
     return row
 
@@ -384,6 +386,7 @@ _USAGE_ROWS = (
     ("loop", "Loop", _yes_no),
     ("label", "Cell label", _plain),
     ("stamp", "Time stamp", _yes_no),
+    ("fit", "Fit in the cell", _plain),
     ("gap_after_s", "Gap after this item", _seconds),
     ("note", "Note", _plain),
 )

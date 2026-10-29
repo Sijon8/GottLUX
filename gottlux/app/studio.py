@@ -20,6 +20,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from gottlux.app import icons, style
 from gottlux.app.colorschemes import PaletteCombo
+from gottlux.app.loader import Worker
 from gottlux.studio import (
     FORMATS,
     PRESETS,
@@ -101,7 +102,9 @@ class _PreviewView(QtWidgets.QLabel):
             self.cropDrawn.emit((a[0], a[1], b[0], b[1]))
 
 
-class _ExportWorker(QtCore.QThread):
+class _ExportWorker(Worker):
+    """The export, off the GUI thread. A loader ``Worker``: referenced until it finishes and
+    waited for at exit, so closing the window mid-export cannot destroy a running thread."""
     progress = QtCore.Signal(float)
     finished_ok = QtCore.Signal(object)
     failed = QtCore.Signal(str)
@@ -422,7 +425,7 @@ class StudioPanel(QtWidgets.QWidget):
         self.frame_sl.blockSignals(False)
         self._frame = min(self._frame, n - 1)
         self._timer.setInterval(int(1000 / min(shot.fps, 30)))
-        if self.play_btn.isChecked() and not self.crop_btn.isChecked():
+        if self._should_play():
             self._timer.start()
         self._show()
 
@@ -465,7 +468,25 @@ class StudioPanel(QtWidgets.QWidget):
             rgb[[y0, y1 - 1], x0:x1] = (57, 197, 207)
         return rgb
 
+    def _should_play(self) -> bool:
+        """The preview loops only while it can be seen: playing, not picking a crop, and
+        on screen (a hidden Studio tab looping cost a quarter of a core)."""
+        return (self.play_btn.isChecked() and not self.crop_btn.isChecked()
+                and self.isVisible())
+
+    def showEvent(self, ev):                    # noqa: N802 (Qt API)
+        super().showEvent(ev)
+        if self._should_play() and self._renderer is not None:
+            self._timer.start()
+
+    def hideEvent(self, ev):                    # noqa: N802 (Qt API)
+        super().hideEvent(ev)
+        self._timer.stop()
+
     def _tick(self):
+        if not self.isVisible():
+            self._timer.stop()
+            return
         if self._renderer is None or not len(self._renderer):
             return
         self._frame = (self._frame + 1) % len(self._renderer)
@@ -479,7 +500,7 @@ class StudioPanel(QtWidgets.QWidget):
 
     def _toggle_play(self, on):
         self.play_btn.setIcon(icons.icon("pause" if on else "play"))
-        if on and not self.crop_btn.isChecked():
+        if self._should_play():
             self._timer.start()
         else:
             self._timer.stop()
@@ -488,7 +509,7 @@ class StudioPanel(QtWidgets.QWidget):
         self.preview.crop_mode = on
         if on:
             self._timer.stop()
-        elif self.play_btn.isChecked():
+        elif self._should_play():
             self._timer.start()
         self._show()
 

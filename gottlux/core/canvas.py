@@ -94,6 +94,9 @@ from gottlux.io.recording import EventWindow
 #: Canonical file suffix for a saved composition.
 SPEC_SUFFIX = ".gottlux-canvas.json"
 
+#: How a cell's picture fills its rect (see :attr:`CanvasClip.fit`).
+FITS = ("auto", "fit", "stretch")
+
 #: EVT2.1 CD words carry 11-bit x/y fields, so a composited ``.raw`` cannot exceed this
 #: canvas dimension (coordinates must stay below 2048). Rendering has no such limit.
 MAX_RAW_DIM = 2048
@@ -156,6 +159,11 @@ class CanvasClip:
         Optional title drawn in the cell's top-left corner.
     stamp : bool
         Draw the recording time the cell shows (a look draws its own readout).
+    fit : str
+        How the picture fills the cell: ``"auto"`` — the event frame stretches to the cell
+        (as it always has) and a look keeps its aspect; ``"fit"`` — keep the aspect,
+        letterboxed on the canvas background; ``"stretch"`` — fill the cell. The ``.raw``
+        export places the events the same way.
     """
     source: str
     rect: tuple = (0, 0, 320, 320)
@@ -175,6 +183,7 @@ class CanvasClip:
     bloom: float = 0.0
     label: str = ""
     stamp: bool = False
+    fit: str = "auto"
 
     def to_dict(self) -> dict:
         return {"source": self.source, "rect": [int(v) for v in self.rect],
@@ -187,7 +196,7 @@ class CanvasClip:
                 "look": str(self.look), "look_params": dict(self.look_params or {}),
                 "palette": str(self.palette), "denoise": bool(self.denoise),
                 "bloom": float(self.bloom), "label": str(self.label),
-                "stamp": bool(self.stamp)}
+                "stamp": bool(self.stamp), "fit": str(self.fit)}
 
     @property
     def visualization(self) -> str:
@@ -214,7 +223,8 @@ class CanvasClip:
                    denoise=bool(d.get("denoise", False)),
                    bloom=float(d.get("bloom", 0.0)),
                    label=str(d.get("label", "") or ""),
-                   stamp=bool(d.get("stamp", False)))
+                   stamp=bool(d.get("stamp", False)),
+                   fit=str(d.get("fit", "auto")) if d.get("fit") in FITS else "auto")
 
 
 @dataclass
@@ -583,23 +593,70 @@ def draw_texts(frame: np.ndarray, texts, t_canvas: float) -> np.ndarray:
     backing bar — over whatever the cells rendered. Items draw in list order, after the
     cells (callers pass the already-composited frame).
     """
-    from PIL import Image, ImageDraw
+    from PIL import Image
     active = [t for t in texts if text_active(t, t_canvas)]
     if not active:
         return frame
     H, W = frame.shape[:2]
-    im = Image.fromarray(np.ascontiguousarray(frame, np.uint8))
+    out = np.array(frame, np.uint8, copy=True)
     for txt in active:
+        if txt.kind == "slide":
+            out = np.array(_slide_image(txt, W, H), np.uint8, copy=True)
+            continue
+        patch = _overlay_patch(txt, W, H)
+        if patch is None:
+            continue
+        x0, y0, layer = patch
+        w, h = layer.size
+        region = Image.fromarray(out[y0:y0 + h, x0:x0 + w]).convert("RGBA")
+        out[y0:y0 + h, x0:x0 + w] = np.asarray(
+            Image.alpha_composite(region, layer).convert("RGB"), np.uint8)
+    return out
+
+
+# Text items render the same pixels every frame, so each is drawn once and cached: a slide
+# as its whole image, an overlay as its RGBA layer cropped to what it covers — composited
+# per frame over that box only (PIL's alpha_composite leaves pixels with zero alpha
+# untouched, so this is identical to compositing the full-frame layer).
+_TEXT_CACHE_MAX = 128
+_text_cache: dict = {}
+
+
+def _text_key(txt: CanvasText, W, H):
+    return (txt.kind, txt.text, txt.anchor, int(txt.margin_px), int(txt.font_size_px),
+            tuple(int(v) for v in txt.color),
+            None if txt.bg_color is None else tuple(int(v) for v in txt.bg_color), W, H)
+
+
+def _cached(key, build):
+    v = _text_cache.get(key)
+    if v is None:
+        if len(_text_cache) >= _TEXT_CACHE_MAX:
+            _text_cache.clear()
+        v = _text_cache[key] = build()
+    return v
+
+
+def _slide_image(txt: CanvasText, W, H) -> np.ndarray:
+    def build():
+        from PIL import Image, ImageDraw
         font = _load_font(txt.font_size_px)
         ink = tuple(int(v) for v in txt.color)
-        if txt.kind == "slide":
-            im = Image.new("RGB", (W, H),
-                           tuple(int(v) for v in (txt.bg_color or (0, 0, 0))))
-            d = ImageDraw.Draw(im)
-            box = d.multiline_textbbox((0, 0), txt.text, font=font, align="center")
-            d.multiline_text(((W - box[2] - box[0]) / 2, (H - box[3] - box[1]) / 2),
-                             txt.text, fill=ink, font=font, align="center")
-            continue
+        im = Image.new("RGB", (W, H), tuple(int(v) for v in (txt.bg_color or (0, 0, 0))))
+        d = ImageDraw.Draw(im)
+        box = d.multiline_textbbox((0, 0), txt.text, font=font, align="center")
+        d.multiline_text(((W - box[2] - box[0]) / 2, (H - box[3] - box[1]) / 2),
+                         txt.text, fill=ink, font=font, align="center")
+        return np.asarray(im, np.uint8)
+    return _cached(_text_key(txt, W, H), build)
+
+
+def _overlay_patch(txt: CanvasText, W, H):
+    """``(x0, y0, RGBA layer)`` — the overlay's full-frame layer cropped to its box."""
+    def build():
+        from PIL import Image, ImageDraw
+        font = _load_font(txt.font_size_px)
+        ink = tuple(int(v) for v in txt.color)
         layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         d = ImageDraw.Draw(layer)
         box = d.multiline_textbbox((0, 0), txt.text, font=font, align="center")
@@ -613,8 +670,11 @@ def draw_texts(frame: np.ndarray, texts, t_canvas: float) -> np.ndarray:
                         fill=tuple(int(v) for v in txt.bg_color) + (_TEXT_BAR_ALPHA,))
         d.multiline_text((x - box[0], y - box[1]), txt.text, fill=ink + (255,),
                          font=font, align="center")
-        im = Image.alpha_composite(im.convert("RGBA"), layer).convert("RGB")
-    return np.asarray(im, np.uint8)
+        bbox = layer.getbbox()
+        if bbox is None:
+            return None
+        return bbox[0], bbox[1], layer.crop(bbox)
+    return _cached(_text_key(txt, W, H), build)
 
 
 # ====================================================================================
@@ -647,7 +707,16 @@ def _norm_roi(clip: CanvasClip, rec):
     return (x0, y0, x1, y1)
 
 
-def render_cell(clip: CanvasClip, rec, t_canvas: float):
+def fit_rect(src_wh, rect) -> tuple:
+    """The largest ``(x, y, w, h)`` with the aspect of *src_wh*, centred in *rect*."""
+    x, y, w, h = (int(v) for v in rect)
+    sw, sh = max(float(src_wh[0]), 1e-9), max(float(src_wh[1]), 1e-9)
+    s = min(w / sw, h / sh)
+    fw, fh = max(1, min(w, int(round(sw * s)))), max(1, min(h, int(round(sh * s))))
+    return (x + (w - fw) // 2, y + (h - fh) // 2, fw, fh)
+
+
+def render_cell(clip: CanvasClip, rec, t_canvas: float, bg=(0, 0, 0)):
     """Render one clip's cell at a canvas time → ``(h, w, 3)`` uint8, or ``None`` (dark).
 
     Classic cells run the canonical pipeline (:func:`gottlux.core.render.render_frame`)
@@ -655,7 +724,8 @@ def render_cell(clip: CanvasClip, rec, t_canvas: float):
     with the clip's colormap, crop to the source ROI, and nearest-resize into the
     destination rect — so events stay crisp blocks rather than smearing. A cell with a
     ``look`` is drawn by that Studio look (:mod:`gottlux.studio.cell`). Either way the
-    cell's label and time stamp are drawn last.
+    cell's label and time stamp are drawn last. *bg* fills the margins a kept aspect
+    leaves (the canvas background).
     """
     t_rec = clip_time(clip, rec, t_canvas)
     w, h = int(clip.rect[2]), int(clip.rect[3])
@@ -664,18 +734,18 @@ def render_cell(clip: CanvasClip, rec, t_canvas: float):
     if clip.look:
         from gottlux.studio import cell as _cell
         lc = _cell.cell_for(rec, clip.look, clip.look_params, clip.palette, clip.roi,
-                            clip.denoise, clip.bloom, (w, h))
+                            clip.denoise, clip.bloom, (w, h), stretch=clip.fit == "stretch")
         rgb = lc.frame(t_rec)
         stamp = lc.stamp(t_rec) if clip.stamp else ""
     else:
-        rgb = _classic_cell(clip, rec, t_rec, (w, h))
+        rgb = _classic_cell(clip, rec, t_rec, (w, h), bg)
         stamp = f"t = {t_rec:.3f} s" if clip.stamp else ""
     if clip.label or stamp:
         rgb = draw_cell_labels(rgb, clip.label, stamp)
     return rgb
 
 
-def _classic_cell(clip: CanvasClip, rec, t_rec: float, size) -> np.ndarray:
+def _classic_cell(clip: CanvasClip, rec, t_rec: float, size, bg=(0, 0, 0)) -> np.ndarray:
     from gottlux.viz import video as _vid
     roi = _norm_roi(clip, rec)
     filt = None if roi == (0, 0, int(rec.width), int(rec.height)) else _RoiFilter(roi)
@@ -685,7 +755,13 @@ def _classic_cell(clip: CanvasClip, rec, t_rec: float, size) -> np.ndarray:
     x0, y0, x1, y1 = roi
     # crop before colourizing: only the ROI's pixels go through the colour table
     rgb = _vid.disp_to_rgb(disp[y0:y1, x0:x1], levels, clip.colormap)
-    return _vid.resize_rgb(rgb, size)
+    if clip.fit != "fit":
+        return _vid.resize_rgb(rgb, size)
+    fx, fy, fw, fh = fit_rect((x1 - x0, y1 - y0), (0, 0, size[0], size[1]))
+    out = np.empty((size[1], size[0], 3), np.uint8)
+    out[:] = np.asarray(bg, np.uint8)
+    out[fy:fy + fh, fx:fx + fw] = _vid.resize_rgb(rgb, (fw, fh))
+    return out
 
 
 _label_fonts: dict = {}
@@ -700,19 +776,30 @@ def draw_cell_labels(rgb: np.ndarray, label: str = "", stamp: str = "") -> np.nd
     font = _label_fonts.get(size)
     if font is None:
         font = _label_fonts[size] = _load_font(size)
-    im = Image.fromarray(np.ascontiguousarray(rgb, np.uint8)).convert("RGBA")
-    layer = Image.new("RGBA", im.size, (0, 0, 0, 0))
-    d = ImageDraw.Draw(layer)
-    pad, y = max(3, size // 4), max(3, size // 4)
+    pad = max(3, size // 4)
+    probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    rows, y, right = [], pad, 0
     for text, ink in ((label, (240, 242, 245, 255)), (stamp, (200, 210, 220, 255))):
         if not text:
             continue
-        box = d.textbbox((0, 0), text, font=font)
+        box = probe.textbbox((0, 0), text, font=font)
         tw, th = box[2] - box[0], box[3] - box[1]
-        d.rectangle((pad - 3, y - 2, pad + tw + 3, y + th + 3), fill=(10, 12, 16, 140))
-        d.text((pad - box[0], y - box[1]), text, font=font, fill=ink)
+        rows.append((text, ink, box, y, tw, th))
+        right = max(right, pad + tw + 4)
         y += th + pad + 2
-    return np.asarray(Image.alpha_composite(im, layer).convert("RGB"), np.uint8)
+    bottom = min(h, y + 4)
+    right = min(w, right)
+    if not rows or right <= 0 or bottom <= 0:
+        return rgb
+    out = np.array(rgb, np.uint8, copy=True)
+    region = Image.fromarray(out[:bottom, :right]).convert("RGBA")
+    layer = Image.new("RGBA", region.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    for text, ink, box, ty, tw, th in rows:                # only the corner is recomposited
+        d.rectangle((pad - 3, ty - 2, pad + tw + 3, ty + th + 3), fill=(10, 12, 16, 140))
+        d.text((pad - box[0], ty - box[1]), text, font=font, fill=ink)
+    out[:bottom, :right] = np.asarray(Image.alpha_composite(region, layer).convert("RGB"))
+    return out
 
 
 def render_frame(spec: CanvasSpec, recs, t_canvas: float) -> np.ndarray:
@@ -724,11 +811,16 @@ def render_frame(spec: CanvasSpec, recs, t_canvas: float) -> np.ndarray:
     active at *t_canvas* draw last, over every cell (:func:`draw_texts`).
     """
     H, W = int(spec.height), int(spec.width)
-    canvas = np.empty((H, W, 3), np.uint8)
-    canvas[:] = np.asarray(spec.background, np.uint8)
+    bg = np.asarray(spec.background, np.uint8)
+    if not bg.any():
+        canvas = np.zeros((H, W, 3), np.uint8)
+    else:                                          # one row, then broadcast (8x faster)
+        canvas = np.empty((H, W, 3), np.uint8)
+        canvas[0] = bg
+        canvas[1:] = canvas[0]
     for i, clip in enumerate(spec.clips):
         rec = _rec_for(recs, clip, i)
-        cell = render_cell(clip, rec, t_canvas)
+        cell = render_cell(clip, rec, t_canvas, spec.background)
         if cell is None:
             continue
         x, y = int(clip.rect[0]), int(clip.rect[1])
@@ -1147,9 +1239,10 @@ def export_raw(spec: CanvasSpec, recs, out_raw: str, duration_s: float | None = 
     done = 0
     xs_all, ys_all, ps_all, ts_all = [], [], [], []
     for (rec, clip, off, _lo, _hi), (i0, i1) in zip(passes, spans):
-        rx, ry, rw, rh = (int(v) for v in clip.rect)
         x0r, y0r, x1r, y1r = _norm_roi(clip, rec)
         roi_w, roi_h = x1r - x0r, y1r - y0r
+        rect = clip.rect if clip.fit != "fit" else fit_rect((roi_w, roi_h), clip.rect)
+        rx, ry, rw, rh = (int(v) for v in rect)
         t0_us = np.int64(round(rec.t_start_s * 1e6))
         for s in range(i0, i1, block):
             e = min(s + block, i1)

@@ -34,6 +34,17 @@ def _private_colour_schemes(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def _fresh_export_options():
+    """Every test starts from the default export options (format, fps, size, quality):
+    the remembered choices of one test must not change what another exports."""
+    import sys
+    if "PySide6.QtCore" in sys.modules:
+        from PySide6 import QtCore
+        QtCore.QSettings("GottLUX", "gottlux").remove("export")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _free_qt_objects_on_the_gui_thread():
     """After each test, delete the Qt objects it left behind — on the GUI thread.
 

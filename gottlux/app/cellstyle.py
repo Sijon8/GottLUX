@@ -135,6 +135,14 @@ class CellStyleEditor(QtWidgets.QWidget):
                                   "its own readout, e.g. the stroboscope's f0 and phase).")
         self.chk_stamp.toggled.connect(self._emit)
         lform.addRow("", self.chk_stamp)
+        self.cb_fit = QtWidgets.QComboBox()
+        for key, label in (("auto", "Auto (frame fills, look keeps aspect)"),
+                           ("fit", "Keep aspect (letterbox)"), ("stretch", "Stretch to cell")):
+            self.cb_fit.addItem(label, key)
+        self.cb_fit.setToolTip("How the picture fills its cell. The .raw export places the "
+                               "events the same way.")
+        self.cb_fit.currentIndexChanged.connect(self._emit)
+        lform.addRow("Fit", self.cb_fit)
         lay.addLayout(lform)
         self._sync_visibility()
 
@@ -207,6 +215,8 @@ class CellStyleEditor(QtWidgets.QWidget):
             self.sp_bloom.setValue(float(clip.bloom))
             self.ed_label.setText(clip.label or "")
             self.chk_stamp.setChecked(bool(clip.stamp))
+            j = self.cb_fit.findData(getattr(clip, "fit", "auto"))
+            self.cb_fit.setCurrentIndex(j if j >= 0 else 0)
         finally:
             self._loading = False
 
@@ -224,3 +234,4 @@ class CellStyleEditor(QtWidgets.QWidget):
         clip.bloom = float(self.sp_bloom.value())
         clip.label = self.ed_label.text()
         clip.stamp = self.chk_stamp.isChecked()
+        clip.fit = str(self.cb_fit.currentData() or "auto")

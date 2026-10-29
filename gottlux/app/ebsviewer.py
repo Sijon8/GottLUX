@@ -180,6 +180,31 @@ def _colormap(name):
     return colors.mpl_colormap(name)(np.linspace(0, 1, 256))[:, :3]
 
 
+def _count(shape, *index) -> np.ndarray:
+    """Events per bin as float32 — what ``np.zeros(shape); np.add.at(img, index, 1.0)``
+    gives, in one ``bincount`` (several times faster; identical counts)."""
+    size = int(np.prod(shape))
+    if not len(index[0]):
+        return np.zeros(shape, np.float32)
+    flat = np.ravel_multi_index(tuple(np.asarray(i, np.int64) for i in index), shape)
+    return np.bincount(flat, minlength=size).astype(np.float32).reshape(shape)
+
+
+def _pano_hist(y, az, H, width=720) -> np.ndarray:
+    """``np.histogram2d(y, az, bins=[H, width], range=[[0, H], [0, 360]])[0]`` for sensor
+    rows and azimuths in [0, 360]: the bin edges are exact multiples of 360/width, so the
+    bin is ``floor(az · width / 360)`` (360 itself in the last bin, as histogram2d puts it)."""
+    y = np.asarray(y)
+    az = np.asarray(az)
+    ok = (y >= 0) & (y <= H) & (az >= 0) & (az <= 360)
+    if not ok.all():
+        y, az = y[ok], az[ok]
+    yi = np.minimum(y.astype(np.int64), H - 1)
+    ai = np.floor(az * (width / 360.0)).astype(np.int64)
+    np.clip(ai, 0, width - 1, out=ai)
+    return np.bincount(yi * width + ai, minlength=H * width).astype(np.float64).reshape(H, width)
+
+
 def player_themes() -> dict:
     """The player's colour themes: its own presets, then every colour-registry colormap
     (user schemes included) under its own name."""
@@ -1127,20 +1152,32 @@ class Player(QtWidgets.QWidget):
 
     def _cmap_rgb(self, img2d, empty=None):
         empty = self.bg_color if empty is None else empty          # Panorama/Radar -> BG; Events -> black
-        vmax = max(np.percentile(img2d[img2d > 0], 99), 1.0) if (img2d > 0).any() else 1.0
+        pos = img2d > 0
+        vals = img2d[pos]
+        vmax = max(np.percentile(vals, 99), 1.0) if vals.size else 1.0
         idx = np.clip(img2d / vmax * 255, 0, 255).astype(np.uint8)
-        rgb = (self.cmap[idx] * 255).astype(np.uint8)
-        rgb[img2d <= 0] = (np.asarray(empty) * 255).astype(np.uint8)
+        if getattr(self, "_lut_u8_src", None) is not self.cmap:   # one uint8 table per map
+            self._lut_u8 = (self.cmap * 255).astype(np.uint8)
+            self._lut_u8_src = self.cmap
+        rgb = self._lut_u8[idx]
+        rgb[~pos] = (np.asarray(empty) * 255).astype(np.uint8)
         return rgb
 
+    def _az_unwrapped(self):
+        """``tel.azimuth_unwrapped()``, computed once per telemetry (it unwraps every call)."""
+        tel = self.tel
+        if getattr(self, "_azu_tel", None) is not tel or getattr(self, "_azu_n", -1) != len(tel.t):
+            self._azu, self._azu_tel, self._azu_n = tel.azimuth_unwrapped(), tel, len(tel.t)
+        return self._azu
+
     def _derot_az(self, x, t):
-        pan = np.rad2deg(np.interp(t - self.tel.offset, self.tel.t, self.tel.azimuth_unwrapped()))
+        pan = np.rad2deg(np.interp(t - self.tel.offset, self.tel.t, self._az_unwrapped()))
         return np.mod(pan - (x - self.W / 2) * (self.fov / self.W), 360.0)
 
     def _boresight_az(self, tc):
         """World azimuth (deg) the sensor centre points at time tc — the live sweep bearing."""
         if self.tel is None: return None
-        pan = np.rad2deg(np.interp(tc - self.tel.offset, self.tel.t, self.tel.azimuth_unwrapped()))
+        pan = np.rad2deg(np.interp(tc - self.tel.offset, self.tel.t, self._az_unwrapped()))
         return float(np.mod(pan, 360.0))
 
     _LEAD = (0, 229, 255); _TRAIL = (150, 90, 60)    # sweep markers: new data / data aging out
@@ -1211,8 +1248,8 @@ class Player(QtWidgets.QWidget):
             if (ps == 1).any(): rgb[ys[ps == 1], xs[ps == 1]] = self.pos_color
             rgb = (rgb * 255).astype(np.uint8)
         else:
-            img = np.zeros((self.H, self.W), np.float32)
-            if hi > lo: np.add.at(img, (ys, xs), 1.0)
+            img = _count((self.H, self.W), ys, xs) if hi > lo else \
+                np.zeros((self.H, self.W), np.float32)
             rgb = self._cmap_rgb(img, empty=BLACK)
         if self.roi:
             x0, y0, x1, y1 = self.roi
@@ -1228,7 +1265,7 @@ class Player(QtWidgets.QWidget):
             rgb = self._cmap_rgb(np.zeros((self.H, PAN_W), np.float32))
         else:
             az = self._derot_az(x, t)
-            Hh = np.histogram2d(y, az, bins=[self.H, PAN_W], range=[[0, self.H], [0, 360]])[0]
+            Hh = _pano_hist(y, az, self.H, PAN_W)
             rgb = self._cmap_rgb(np.log1p(Hh))
         rgb = _pano_axis_overlay(rgb)
         self._draw_sweep_pano(rgb, float(self.t[min(hi, len(self.t)) - 1]) * 1e-6)
@@ -1269,7 +1306,7 @@ class Player(QtWidgets.QWidget):
             c = (S - 1) / 2.0; R = S * 0.46
             px = (c + rr * R * np.cos(th)).astype(np.int64); py = (c + rr * R * np.sin(th)).astype(np.int64)
             ok = (px >= 0) & (px < S) & (py >= 0) & (py < S)
-            cv = np.zeros((S, S), np.float32); np.add.at(cv, (py[ok], px[ok]), 1.0)
+            cv = _count((S, S), py[ok], px[ok])
             if (cv > 0).any():
                 ev = self._cmap_rgb(np.log1p(cv)); has = cv > 0; rgb[has] = ev[has]
         self._draw_sweep_radar(rgb, tc)
@@ -1300,8 +1337,7 @@ class Player(QtWidgets.QWidget):
         t_row = np.clip(((t - (tc - self.at_win)) / self.at_win * ROWS).astype(int), 0, ROWS - 1)
         t_row = ROWS - 1 - t_row                          # newest at top
         az_col = np.clip((az / 360.0 * PAN_W).astype(int), 0, PAN_W - 1)
-        H = np.zeros((ROWS, PAN_W), np.float32)
-        np.add.at(H, (t_row, az_col), 1.0)
+        H = _count((ROWS, PAN_W), t_row, az_col)
         rgb = self._cmap_rgb(np.log1p(H))
         rgb = _pano_axis_overlay(rgb)
         return np.ascontiguousarray(rgb)
@@ -1316,8 +1352,8 @@ class Player(QtWidgets.QWidget):
         on_img = np.zeros((self.H, self.W), np.float32); off_img = np.zeros((self.H, self.W), np.float32)
         if len(xs):
             on_m = (ps == 1); off_m = (ps == 0)
-            if on_m.any():  np.add.at(on_img,  (ys[on_m],  xs[on_m]),  1.0)
-            if off_m.any(): np.add.at(off_img, (ys[off_m], xs[off_m]), 1.0)
+            if on_m.any():  on_img = _count((self.H, self.W), ys[on_m], xs[on_m])
+            if off_m.any(): off_img = _count((self.H, self.W), ys[off_m], xs[off_m])
         r = self.pdiv_radius
         if r > 0:
             from scipy.ndimage import gaussian_filter
@@ -1342,7 +1378,7 @@ class Player(QtWidgets.QWidget):
         if len(x) == 0:
             return self._cmap_rgb(np.zeros((self.H, PAN_W), np.float32))
         az = self._derot_az(x, t)
-        Hh = np.histogram2d(y, az, bins=[self.H, PAN_W], range=[[0, self.H], [0, 360]])[0]
+        Hh = _pano_hist(y, az, self.H, PAN_W)
         rgb = self._cmap_rgb(np.log1p(Hh.astype(np.float32)))
         rgb = _pano_axis_overlay(rgb)
         return np.ascontiguousarray(rgb)
@@ -1361,8 +1397,7 @@ class Player(QtWidgets.QWidget):
         pu = (u * sc + (self.W - u.max() * sc) / 2).astype(np.int64)
         pv = (v_p * sc + (self.H - v_p.max() * sc) / 2).astype(np.int64)
         ok = (pu >= 0) & (pu < self.W) & (pv >= 0) & (pv < self.H)
-        img = np.zeros((self.H, self.W), np.float32)
-        np.add.at(img, (pv[ok], pu[ok]), 1.0)
+        img = _count((self.H, self.W), pv[ok], pu[ok])
         return np.ascontiguousarray(self._cmap_rgb(np.log1p(img), empty=(0.02, 0.03, 0.09)))
 
     def _render_iat_surface(self, lo, hi):
@@ -1435,8 +1470,7 @@ class Player(QtWidgets.QWidget):
         bt = np.clip(((ts - (tc - WIN)) * FS).astype(int), 0, n_tbins - 1)
 
         # Build 3D histogram [grid_y, grid_x, time_bin] — vectorised via add.at
-        vol = np.zeros((GN, GN, n_tbins), np.float32)
-        if len(gx): np.add.at(vol, (gy, gx, bt), 1.0)
+        vol = _count((GN, GN, n_tbins), gy, gx, bt)
 
         # DC removal: subtract the per-cell mean before the FFT (match the reference viewer)
         vol -= vol.mean(axis=2, keepdims=True)
@@ -1529,9 +1563,8 @@ class Player(QtWidgets.QWidget):
         if len(xs) == 0:
             return self._cmap_rgb(np.zeros((self.H, OUT_W), np.float32))
         t_col = np.clip(((ts - (tc - self.et_win)) / self.et_win * OUT_W).astype(int), 0, OUT_W - 1)
-        H_img = np.zeros((self.H, OUT_W), np.float32)
         valid = (ys >= 0) & (ys < self.H)
-        np.add.at(H_img, (ys[valid], t_col[valid]), 1.0)
+        H_img = _count((self.H, OUT_W), ys[valid], t_col[valid])
         return np.ascontiguousarray(self._cmap_rgb(np.log1p(H_img)))
 
     def _on_spin_changed(self, v):
